@@ -10,6 +10,8 @@ if (!process.env.NEXT_PUBLIC_SANAS_API_KEY) {
 }
 const SANAS_API_KEY = process.env.NEXT_PUBLIC_SANAS_API_KEY;
 
+const SAMPLE_RATE = 24000;
+
 // Step 1: Create input audio stream
 export async function createInputStream() {
   const inputStream = await navigator.mediaDevices.getUserMedia({
@@ -17,7 +19,7 @@ export async function createInputStream() {
     audio: {
       echoCancellation: true,
       noiseSuppression: false,
-      sampleRate: 24000,
+      sampleRate: SAMPLE_RATE,
       autoGainControl: true,
     },
   });
@@ -83,7 +85,11 @@ export async function receiveAnswer(
 ) {
   const sdpResponse = await fetch(`${LT_ENDPOINT}/session`, {
     method: "POST",
-    body: JSON.stringify(offer),
+    body: JSON.stringify({
+      ...offer,
+      input_sample_rate: SAMPLE_RATE,
+      output_sample_rate: SAMPLE_RATE,
+    }),
     headers: {
       "Content-Type": "application/json",
       "X-API-Key": SANAS_API_KEY,
