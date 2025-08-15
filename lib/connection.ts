@@ -154,18 +154,15 @@ export async function startTranslationSession(
     },
   };
   console.log("Sending reset message", resetMessage);
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve) => {
     const onMessage = (event: MessageEvent) => {
-      dataChannel.removeEventListener("message", onMessage);
       const message: LTMessage = JSON.parse(event.data);
-      if (message.type === "ready") {
-        if (message.ready.id === resetMessage.reset.id) {
-          resolve(true);
-        } else {
-          reject(new Error(`Unexpected ID: ${message.ready.id}`));
-        }
-      } else {
-        reject(new Error(`Unexpected message type: ${message.type}`));
+      if (
+        message.type === "ready" &&
+        message.ready.id === resetMessage.reset.id
+      ) {
+        resolve(true);
+        dataChannel.removeEventListener("message", onMessage);
       }
     };
     dataChannel.addEventListener("message", onMessage);
