@@ -1,10 +1,11 @@
 import { z } from "zod";
+
 import { Word } from "./words";
 
 export const ResetMessage = z.object({
   id: z.string(),
   clear_history: z.boolean().optional(),
-  lang_in: z.string(),
+  lang_in: z.string().nullable(),
   lang_out: z.string(),
   voice_id: z.string().nullable().optional(),
   glossary: z.array(z.string()).nullable().optional(),
@@ -24,8 +25,10 @@ export const WrappedRecordingMessage = z.object({
 export type WrappedRecordingMessage = z.infer<typeof WrappedRecordingMessage>;
 
 export const TranscriptionMessage = z.object({
-  type: z.enum(["partial", "complete"]),
-  transcriptions: z.array(Word),
+  complete: z.array(Word),
+  partial: z.array(Word),
+  lang: z.string().nullable().optional(),
+  utterance_idx: z.number(),
 });
 export type TranscriptionMessage = z.infer<typeof TranscriptionMessage>;
 
@@ -38,8 +41,9 @@ export type WrappedTranscriptionMessage = z.infer<
 >;
 
 export const TranslationMessage = z.object({
-  type: z.enum(["partial", "complete"]),
-  translations: z.array(Word),
+  complete: z.array(Word),
+  partial: z.array(Word),
+  utterance_idx: z.number(),
 });
 export type TranslationMessage = z.infer<typeof TranslationMessage>;
 

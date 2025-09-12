@@ -7,4 +7,9 @@ export const Word = z.object({
 });
 export type Word = z.infer<typeof Word>;
 
-export type Phrase = Word[];
+export const Utterance = z.object({
+  complete: z.array(Word),
+  partial: z.array(Word),
+  idx: z.number(),
+});
+export type Utterance = z.infer<typeof Utterance>;

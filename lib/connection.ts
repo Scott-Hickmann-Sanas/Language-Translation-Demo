@@ -118,7 +118,7 @@ export async function startTranslationSession(
     voiceId,
     glossary,
   }: {
-    langIn: string;
+    langIn: string | null;
     langOut: string;
     voiceId: string | null;
     glossary: string[];

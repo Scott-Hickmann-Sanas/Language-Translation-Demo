@@ -4,6 +4,14 @@ import { useLanguages } from "@/hooks/useLanguages";
 import { useLanguageTranslationConnection } from "@/hooks/useConnection";
 import { useLanguageTranslationCaptions } from "@/hooks/useCaptions";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Utterance } from "@/types/words";
+import UtteranceComponent from "@/components/utterance";
+
+interface GroupedUtterance {
+  transcription: Utterance;
+  translation: Utterance;
+  idx: number;
+}
 
 export default function Demo() {
   const [isRunning, setIsRunning] = useState(false);
@@ -13,7 +21,7 @@ export default function Demo() {
     useLanguageTranslationConnection(handleMessage);
   const audio = useRef<HTMLAudioElement | null>(null);
 
-  const [langIn, setLangIn] = useState<string>("en-US");
+  const [langIn, setLangIn] = useState<string | null>(null);
   const [langOut, setLangOut] = useState<string>("fr-FR");
 
   const config = useMemo(
@@ -50,8 +58,10 @@ export default function Demo() {
 
   const langInName = useMemo(
     () =>
-      languages.find((language) => language.long_code === config.langIn)
-        ?.name ?? config.langIn,
+      config.langIn
+        ? (languages.find((language) => language.long_code === config.langIn)
+            ?.name ?? config.langIn)
+        : "Auto",
     [languages, config.langIn],
   );
 
@@ -61,6 +71,38 @@ export default function Demo() {
         ?.name ?? config.langOut,
     [languages, config.langOut],
   );
+
+  const detectedLangInName = useMemo(
+    () =>
+      languages.find((language) => language.long_code === state.detectedLangIn)
+        ?.name ?? state.detectedLangIn,
+    [languages, state.detectedLangIn],
+  );
+
+  const groupedUtterances = useMemo(() => {
+    const groupedUtterances: GroupedUtterance[] = [];
+    for (
+      let i = 0;
+      i < Math.max(state.transcriptions.length, state.translations.length);
+      i++
+    ) {
+      const grouped: GroupedUtterance = {
+        transcription: state.transcriptions[i] ?? {
+          complete: [],
+          partial: [],
+          idx: i,
+        },
+        translation: state.translations[i] ?? {
+          complete: [],
+          partial: [],
+          idx: i,
+        },
+        idx: i,
+      };
+      groupedUtterances.push(grouped);
+    }
+    return groupedUtterances;
+  }, [state.transcriptions, state.translations]);
 
   return (
     <>
@@ -72,10 +114,15 @@ export default function Demo() {
           {langInName} to {langOutName}
         </h2>
         <select
-          value={langIn}
-          onChange={(e) => setLangIn(e.target.value)}
+          value={langIn ?? "auto"}
+          onChange={(e) =>
+            e.target.value === "auto"
+              ? setLangIn(null)
+              : setLangIn(e.target.value)
+          }
           className="w-full p-2 border border-gray-300 rounded-md"
         >
+          <option value="auto">Auto</option>
           {languages.map((language) => (
             <option key={language.long_code} value={language.long_code}>
               {language.name}
@@ -113,40 +160,14 @@ export default function Demo() {
           )}
         </div>
         {!isLoading && isRunning ? (
-          <>
-            <h2 className="text-xl font-semibold text-gray-700">
-              Complete Transcriptions
-            </h2>
-            <div className="space-y-2">
-              {state.completeTranscriptions.map((transcription, index) => (
-                <div key={index} className="p-2 bg-gray-100 rounded-md">
-                  {transcription.map((word) => word.word).join("")}
-                </div>
-              ))}
-            </div>
-            <h2 className="text-xl font-semibold text-gray-700">
-              Partial Transcription
-            </h2>
-            <div className="p-2 bg-gray-100 rounded-md">
-              {state.pendingTranscriptions.map((word) => word.word).join("")}
-            </div>
-            <h2 className="text-xl font-semibold text-gray-700">
-              Complete Translations
-            </h2>
-            <div className="space-y-2">
-              {state.completeTranslations.map((translation, index) => (
-                <div key={index} className="p-2 bg-gray-100 rounded-md">
-                  {translation.map((word) => word.word).join("")}
-                </div>
-              ))}
-            </div>
-            <h2 className="text-xl font-semibold text-gray-700">
-              Partial Translation
-            </h2>
-            <div className="p-2 bg-gray-100 rounded-md">
-              {state.pendingTranslations.map((word) => word.word).join("")}
-            </div>
-          </>
+          <div className="flex flex-col gap-4">
+            {langIn === null && (
+              <div>{detectedLangInName ?? "Detecting language..."}</div>
+            )}
+            {groupedUtterances.map((utterance, index) => (
+              <UtteranceComponent key={index} utterance={utterance} />
+            ))}
+          </div>
         ) : null}
       </div>
       <audio ref={audio} autoPlay className="w-full mt-4" />

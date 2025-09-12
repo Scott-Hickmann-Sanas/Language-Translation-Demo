@@ -31,7 +31,7 @@ export function useLanguageTranslationConnection(
 
   const startCall = useCallback(
     async (config: {
-      langIn: string;
+      langIn: string | null;
       langOut: string;
       voiceId: string | null;
       glossary: string[];
