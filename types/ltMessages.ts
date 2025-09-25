@@ -47,6 +47,11 @@ export const TranslationMessage = z.object({
 });
 export type TranslationMessage = z.infer<typeof TranslationMessage>;
 
+export const SpeechMessage = z.object({
+  text: z.string(),
+});
+export type SpeechMessage = z.infer<typeof SpeechMessage>;
+
 export const WrappedTranslationMessage = z.object({
   type: z.literal("translation"),
   translation: TranslationMessage,
@@ -54,6 +59,12 @@ export const WrappedTranslationMessage = z.object({
 export type WrappedTranslationMessage = z.infer<
   typeof WrappedTranslationMessage
 >;
+
+export const WrappedSpeechMessage = z.object({
+  type: z.literal("speech"),
+  speech: SpeechMessage,
+});
+export type WrappedSpeechMessage = z.infer<typeof WrappedSpeechMessage>;
 
 export const ReadyMessage = z.object({
   id: z.string().nullable(),
@@ -72,6 +83,7 @@ export const LTMessage = z.discriminatedUnion("type", [
   WrappedRecordingMessage,
   WrappedTranscriptionMessage,
   WrappedTranslationMessage,
+  WrappedSpeechMessage,
   WrappedReadyMessage,
 ]);
 

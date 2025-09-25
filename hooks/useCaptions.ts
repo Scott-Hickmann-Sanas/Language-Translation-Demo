@@ -66,6 +66,9 @@ export function useLanguageTranslationCaptions() {
         }
         break;
       }
+      case "speech":
+        // Can be used to track what text has been spoken
+        break;
       default:
         console.error("Unknown message type", message.type);
     }
