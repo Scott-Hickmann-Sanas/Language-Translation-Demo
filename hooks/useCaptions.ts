@@ -66,7 +66,7 @@ export function useLanguageTranslationCaptions() {
         }
         break;
       }
-      case "speech":
+      case "speech_delimiter":
         // Can be used to track what text has been spoken
         break;
       default:

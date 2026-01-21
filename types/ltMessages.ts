@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { Delimiter } from "./delimiters";
 import { Word } from "./words";
 
 export const ResetMessage = z.object({
@@ -9,6 +10,7 @@ export const ResetMessage = z.object({
   lang_out: z.string(),
   voice_id: z.string().nullable().optional(),
   glossary: z.array(z.string()).nullable().optional(),
+  can_lang_swap: z.boolean().optional(),
 });
 export type ResetMessage = z.infer<typeof ResetMessage>;
 
@@ -47,10 +49,12 @@ export const TranslationMessage = z.object({
 });
 export type TranslationMessage = z.infer<typeof TranslationMessage>;
 
-export const SpeechMessage = z.object({
-  text: z.string(),
+export const SpeechDelimiterMessage = z.object({
+  time: z.number(),
+  transcription: Delimiter,
+  translation: Delimiter,
 });
-export type SpeechMessage = z.infer<typeof SpeechMessage>;
+export type SpeechDelimiterMessage = z.infer<typeof SpeechDelimiterMessage>;
 
 export const WrappedTranslationMessage = z.object({
   type: z.literal("translation"),
@@ -60,11 +64,13 @@ export type WrappedTranslationMessage = z.infer<
   typeof WrappedTranslationMessage
 >;
 
-export const WrappedSpeechMessage = z.object({
-  type: z.literal("speech"),
-  speech: SpeechMessage,
+export const WrappedSpeechDelimiterMessage = z.object({
+  type: z.literal("speech_delimiter"),
+  speech_delimiter: SpeechDelimiterMessage,
 });
-export type WrappedSpeechMessage = z.infer<typeof WrappedSpeechMessage>;
+export type WrappedSpeechDelimiterMessage = z.infer<
+  typeof WrappedSpeechDelimiterMessage
+>;
 
 export const ReadyMessage = z.object({
   id: z.string().nullable(),
@@ -83,7 +89,7 @@ export const LTMessage = z.discriminatedUnion("type", [
   WrappedRecordingMessage,
   WrappedTranscriptionMessage,
   WrappedTranslationMessage,
-  WrappedSpeechMessage,
+  WrappedSpeechDelimiterMessage,
   WrappedReadyMessage,
 ]);
 
