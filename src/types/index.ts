@@ -1,4 +1,3 @@
-import { IdentifiedLanguage } from "./ltMessages";
 import { Word } from "./words";
 
 export * from "./delimiters";
@@ -67,9 +66,34 @@ export interface UtteranceDisplay {
   translation: UtteranceStreamDisplay;
 }
 
+export interface IdentifiedLanguageDisplay {
+  /** Short language code (e.g. "en"). */
+  shortCode: string;
+  /** Localized display name. */
+  name: string;
+  /** Probability of the language being detected. */
+  probability: number;
+}
+
 export interface TranslationClientState {
   /** Pre-computed utterance display objects, one per utterance. */
   utterances: UtteranceDisplay[];
   /** Identified languages from language detection. */
-  identifiedLanguages: IdentifiedLanguage[];
+  identifiedLanguages: IdentifiedLanguageDisplay[];
+}
+
+export interface Language {
+  /** Full language code with region (e.g. "en-US"). */
+  longCode: string;
+  /** Short language code (e.g. "en"). */
+  shortCode: string;
+  /** Localized display name. */
+  name: string;
+  /** Support tier. */
+  support: "alpha" | "beta" | "stable";
+}
+
+export interface FetchLanguagesOptions {
+  /** Language code for localized response names (e.g. "en-US"). Defaults to "en-US". */
+  lang?: string;
 }

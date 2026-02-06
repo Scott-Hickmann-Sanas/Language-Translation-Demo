@@ -3,6 +3,8 @@ export type {
   ConnectionState,
   ConnectOptions,
   ConnectResult,
+  FetchLanguagesOptions,
+  Language,
   ResetOptions,
   SanasTranslationClientOptions,
   TranslationClientState,

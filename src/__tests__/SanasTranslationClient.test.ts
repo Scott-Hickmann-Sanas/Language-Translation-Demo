@@ -95,7 +95,39 @@ class MockRTCPeerConnection {
   }
 }
 
+// --- Mock Web Audio API ---
+
+class MockGainNode {
+  gain = { value: 1 };
+  connect = jest.fn();
+  disconnect = jest.fn();
+}
+
+class MockScriptProcessorNode {
+  onaudioprocess: ((event: unknown) => void) | null = null;
+  bufferSize = 4096;
+  connect = jest.fn();
+  disconnect = jest.fn();
+}
+
+class MockAudioSourceNode {
+  connect = jest.fn();
+  disconnect = jest.fn();
+}
+
+class MockAudioContext {
+  sampleRate = 48000;
+  state = "running";
+  createMediaStreamSource = jest.fn(() => new MockAudioSourceNode());
+  createScriptProcessor = jest.fn(() => new MockScriptProcessorNode());
+  createGain = jest.fn(() => new MockGainNode());
+  resume = jest.fn(() => Promise.resolve());
+  close = jest.fn(() => Promise.resolve());
+}
+
 // Install mocks globally
+(globalThis as unknown as Record<string, unknown>).AudioContext =
+  MockAudioContext;
 (globalThis as unknown as Record<string, unknown>).RTCPeerConnection =
   MockRTCPeerConnection;
 (globalThis as unknown as Record<string, unknown>).MediaStream =
@@ -608,6 +640,149 @@ describe("SanasTranslationClient", () => {
       unsub();
 
       expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("fetchLanguages", () => {
+    it("fetches and maps languages from the server", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            languages: [
+              {
+                long_code: "en-US",
+                short_code: "en",
+                name: "English",
+                support: "stable",
+              },
+              {
+                long_code: "es-ES",
+                short_code: "es",
+                name: "Spanish",
+                support: "stable",
+              },
+            ],
+          },
+        }),
+      });
+
+      const languages = await client.fetchLanguages();
+
+      expect(languages).toEqual([
+        {
+          longCode: "en-US",
+          shortCode: "en",
+          name: "English",
+          support: "stable",
+        },
+        {
+          longCode: "es-ES",
+          shortCode: "es",
+          name: "Spanish",
+          support: "stable",
+        },
+      ]);
+    });
+
+    it("sends X-API-Key header when apiKey is set", async () => {
+      const client = createClient({ apiKey: "my-key" });
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: { languages: [] } }),
+      });
+
+      await client.fetchLanguages();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://lt.test.com/v2/languages/list",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "X-API-Key": "my-key",
+          }),
+        }),
+      );
+    });
+
+    it("sends Authorization header when accessToken is set", async () => {
+      const client = createClient({
+        apiKey: undefined,
+        accessToken: "my-token",
+      });
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: { languages: [] } }),
+      });
+
+      await client.fetchLanguages();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer my-token",
+          }),
+        }),
+      );
+    });
+
+    it("throws when no credentials provided", async () => {
+      const client = createClient({
+        apiKey: undefined,
+        accessToken: undefined,
+      });
+
+      await expect(client.fetchLanguages()).rejects.toThrow(
+        "Missing credentials",
+      );
+    });
+
+    it("sends x-lang header when lang option is provided", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: { languages: [] } }),
+      });
+
+      await client.fetchLanguages({ lang: "es-ES" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "x-lang": "es-ES",
+          }),
+        }),
+      );
+    });
+
+    it("throws on 403 (authentication failure)", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 403,
+        text: async () => "Forbidden",
+      });
+
+      await expect(client.fetchLanguages()).rejects.toThrow(
+        "Authentication failed.",
+      );
+    });
+
+    it("throws on other HTTP errors", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "Internal Server Error",
+      });
+
+      await expect(client.fetchLanguages()).rejects.toThrow(
+        "Failed to fetch languages: 500",
+      );
     });
   });
 

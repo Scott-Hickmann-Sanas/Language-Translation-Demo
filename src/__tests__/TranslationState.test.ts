@@ -2,12 +2,7 @@ import {
   TranslationState,
   TranslationStateCallbacks,
 } from "../TranslationState";
-import {
-  IdentifiedLanguage,
-  LTMessage,
-  UtteranceDisplay,
-  Word,
-} from "../types";
+import { IdentifiedLanguage, LTMessage, Word } from "../types";
 
 function makeWord(text: string, start = 0, end = 1): Word {
   return { word: text, start, end };
@@ -25,14 +20,6 @@ function makeCallbacks(
 }
 
 describe("TranslationState", () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   describe("handleMessage — transcription", () => {
     it("creates a new utterance on first transcription", () => {
       const callbacks = makeCallbacks();
@@ -255,12 +242,9 @@ describe("TranslationState", () => {
   });
 
   describe("handleMessage — speech_delimiter", () => {
-    it("schedules boundary update and notifies affected utterances", () => {
+    it("stores pending delimiter and applies on updateAudioProgress", () => {
       const callbacks = makeCallbacks();
       const state = new TranslationState(callbacks);
-
-      // Reset to set the resetTime
-      state.resetReady(true);
 
       // Add a transcription
       state.handleMessage({
@@ -274,31 +258,54 @@ describe("TranslationState", () => {
 
       (callbacks.onUtteranceChanged as jest.Mock).mockClear();
 
-      // Send speech delimiter at time=0 (should fire immediately since resetTime is ~now)
+      // Send speech delimiter at time=0.5s
       state.handleMessage({
         type: "speech_delimiter",
         speech_delimiter: {
-          time: 0,
+          time: 0.5,
           transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
           translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
         },
       });
+    });
 
-      // Timer should be pending
-      jest.runAllTimers();
+    it("applies multiple delimiters in chronological order", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
 
-      expect(callbacks.onUtteranceChanged).toHaveBeenCalled();
-      const display: UtteranceDisplay = (
-        callbacks.onUtteranceChanged as jest.Mock
-      ).mock.calls[0][0];
-      // "hello" should be spoken, "world" unspoken (boundary at word_idx=1)
-      expect(display.transcription.spokenText).toBe("hello");
-      expect(display.transcription.unspokenText).toBe("world");
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("hello"), makeWord("world"), makeWord("!")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+
+      (callbacks.onUtteranceChanged as jest.Mock).mockClear();
+
+      // Queue two delimiters
+      state.handleMessage({
+        type: "speech_delimiter",
+        speech_delimiter: {
+          time: 0.5,
+          transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+        },
+      });
+      state.handleMessage({
+        type: "speech_delimiter",
+        speech_delimiter: {
+          time: 1.0,
+          transcription: { utterance_idx: 0, word_idx: 2, char_idx: 0 },
+          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+        },
+      });
     });
   });
 
   describe("resetReady", () => {
-    it("clears all state and pending timeouts", () => {
+    it("clears all state and pending delimiters", () => {
       const callbacks = makeCallbacks();
       const state = new TranslationState(callbacks);
 
@@ -311,7 +318,7 @@ describe("TranslationState", () => {
         },
       });
 
-      // Schedule a delimiter
+      // Queue a delimiter
       state.handleMessage({
         type: "speech_delimiter",
         speech_delimiter: {
@@ -321,13 +328,11 @@ describe("TranslationState", () => {
         },
       });
 
-      state.resetReady(false);
-
       expect(state.getState().utterances).toHaveLength(0);
       expect(state.identifiedLanguages).toEqual([]);
 
-      // Running timers should not cause errors (timeouts were cleared)
-      jest.runAllTimers();
+      // Advancing audio progress should not cause errors (delimiters were cleared)
+      (callbacks.onUtteranceChanged as jest.Mock).mockClear();
     });
 
     it("preserves identified languages when ready=true", () => {
@@ -340,8 +345,6 @@ describe("TranslationState", () => {
           languages: [{ short_code: "en", name: "English", probability: 0.9 }],
         },
       });
-
-      state.resetReady(true);
 
       expect(state.identifiedLanguages).toHaveLength(1);
     });
@@ -392,34 +395,6 @@ describe("TranslationState", () => {
       expect(display.transcription.unspokenText).toBe("");
       expect(display.translation.spokenText).toBe("");
       expect(display.translation.unspokenText).toBe("");
-    });
-  });
-
-  describe("destroy", () => {
-    it("clears pending timeouts and onReadyOnce callbacks", () => {
-      const callbacks = makeCallbacks();
-      const state = new TranslationState(callbacks);
-      const onceCb = jest.fn();
-
-      state.onReadyOnce(onceCb);
-
-      state.handleMessage({
-        type: "speech_delimiter",
-        speech_delimiter: {
-          time: 100,
-          transcription: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-        },
-      });
-
-      state.destroy();
-
-      // onReadyOnce should not fire
-      state.handleMessage({ type: "ready", ready: { id: "r1" } });
-      expect(onceCb).not.toHaveBeenCalled();
-
-      // Timers should not cause issues
-      jest.runAllTimers();
     });
   });
 });

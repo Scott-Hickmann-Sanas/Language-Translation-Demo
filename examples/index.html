@@ -74,6 +74,10 @@
       button:hover:not(:disabled) {
         opacity: 0.85;
       }
+      #fetchLangsBtn {
+        background: #7c3aed;
+        color: #fff;
+      }
       #connectBtn {
         background: #2563eb;
         color: #fff;
@@ -89,6 +93,22 @@
       #muteBtn {
         background: #737373;
         color: #fff;
+      }
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .checkbox-row input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+      }
+      .checkbox-row label {
+        display: inline;
+        margin: 0;
+        font-weight: 400;
+        cursor: pointer;
       }
       .btn-row {
         display: flex;
@@ -161,6 +181,29 @@
         color: #94a3b8;
         font-style: italic;
       }
+      #languagesList {
+        font-size: 0.85rem;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      #languagesList:empty::after {
+        content: "Click \"Fetch Languages\" to load available languages...";
+        color: #94a3b8;
+        font-style: italic;
+      }
+      .lang-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      .lang-item .lang-support {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #e0e7ff;
+        color: #4338ca;
+      }
       .info-row {
         display: flex;
         gap: 16px;
@@ -202,16 +245,26 @@
           <input type="text" id="userName" placeholder="e.g. Test User" />
         </div>
       </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="detectLangs" />
+        <label for="detectLangs">Enable language detection</label>
+      </div>
     </div>
 
     <div class="section">
       <h2>Controls</h2>
       <div class="btn-row">
+        <button id="fetchLangsBtn">Fetch Languages</button>
         <button id="connectBtn">Connect</button>
         <button id="disconnectBtn" disabled>Disconnect</button>
-        <button id="resetBtn" disabled>Reset Translation</button>
+        <button id="resetBtn" disabled>Update Config</button>
         <button id="muteBtn" disabled>Mute</button>
       </div>
+    </div>
+
+    <div class="section">
+      <h2>Available Languages</h2>
+      <div id="languagesList"></div>
     </div>
 
     <div class="section">
@@ -238,7 +291,7 @@
     <script type="module">
       import { SanasTranslationClient } from "../dist/index.js";
 
-      const ENDPOINT = "https://api.sanaslt.com";
+      const ENDPOINT = "https://catechumenal-nonsocially-marivel.ngrok-free.dev";
 
       // DOM elements
       const apiKeyInput = document.getElementById("apiKey");
@@ -246,10 +299,13 @@
       const langOutInput = document.getElementById("langOut");
       const conversationIdInput = document.getElementById("conversationId");
       const userNameInput = document.getElementById("userName");
+      const fetchLangsBtn = document.getElementById("fetchLangsBtn");
+      const languagesListDiv = document.getElementById("languagesList");
       const connectBtn = document.getElementById("connectBtn");
       const disconnectBtn = document.getElementById("disconnectBtn");
       const resetBtn = document.getElementById("resetBtn");
       const muteBtn = document.getElementById("muteBtn");
+      const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
       const sessionIdSpan = document.getElementById("sessionId");
       const detectedLangsSpan = document.getElementById("detectedLangs");
@@ -305,8 +361,43 @@
         return d.innerHTML;
       }
 
+      // Fetch Languages
+      fetchLangsBtn.addEventListener("click", async () => {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) {
+          log("Please enter an API key.", "error");
+          return;
+        }
+
+        const tempClient = new SanasTranslationClient({
+          apiKey,
+          endpoint: ENDPOINT,
+        });
+
+        fetchLangsBtn.disabled = true;
+        log("Fetching available languages...", "info");
+
+        try {
+          const languages = await tempClient.fetchLanguages();
+          languagesListDiv.innerHTML = "";
+          for (const lang of languages) {
+            const item = document.createElement("div");
+            item.className = "lang-item";
+            item.innerHTML = `<span>${esc(lang.name)} <code>${esc(lang.longCode)}</code></span><span class="lang-support">${esc(lang.support)}</span>`;
+            languagesListDiv.appendChild(item);
+          }
+          log(`Loaded ${languages.length} languages.`, "success");
+        } catch (err) {
+          log(`Failed to fetch languages: ${err.message}`, "error");
+        } finally {
+          fetchLangsBtn.disabled = false;
+        }
+      });
+
       // Connect
       connectBtn.addEventListener("click", async () => {
+        utterancesDiv.innerHTML = "";
+
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
           log("Please enter an API key.", "error");
@@ -338,7 +429,7 @@
         unsubscribers.push(
           client.onLanguages((languages) => {
             const display = languages
-              .map((l) => `${l.language} (${(l.confidence * 100).toFixed(0)}%)`)
+              .map((l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`)
               .join(", ");
             detectedLangsSpan.textContent = display;
             log(`Detected languages: ${display}`, "info");
@@ -370,8 +461,9 @@
           const langIn = langInInput.value.trim();
           const langOut = langOutInput.value.trim();
           if (langIn && langOut) {
-            log(`Sending reset (${langIn} → ${langOut})...`, "info");
-            await client.reset({ langIn, langOut });
+            const detectLanguages = detectLangsCheckbox.checked;
+            log(`Sending reset (${langIn} → ${langOut}, detectLanguages: ${detectLanguages})...`, "info");
+            await client.reset({ langIn, langOut, detectLanguages });
             log("Reset complete. Translation active.", "success");
           }
         } catch (err) {
@@ -399,8 +491,9 @@
           return;
         }
         try {
-          log(`Resetting translation (${langIn} → ${langOut})...`, "info");
-          await client.reset({ langIn, langOut });
+          const detectLanguages = detectLangsCheckbox.checked;
+          log(`Resetting translation (${langIn} → ${langOut}, detectLanguages: ${detectLanguages})...`, "info");
+          await client.reset({ langIn, langOut, detectLanguages });
           log("Reset complete.", "success");
         } catch (err) {
           log(`Reset failed: ${err.message}`, "error");

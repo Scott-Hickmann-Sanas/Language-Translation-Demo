@@ -1,5 +1,5 @@
 import {
-  IdentifiedLanguage,
+  IdentifiedLanguageDisplay,
   LTMessage,
   TranslationClientState,
   Utterance,
@@ -129,7 +129,7 @@ function buildUtteranceStreamDisplay(
 
 export interface TranslationStateCallbacks {
   onUtteranceChanged: (utterance: UtteranceDisplay, index: number) => void;
-  onLanguagesChanged: (languages: IdentifiedLanguage[]) => void;
+  onLanguagesChanged: (languages: IdentifiedLanguageDisplay[]) => void;
   onReady: (id: string | null) => void;
 }
 
@@ -142,9 +142,7 @@ export class TranslationState {
   private translationsSpeechBoundary: CharacterPosition = {
     ...ZERO_POSITION,
   };
-  private _identifiedLanguages: IdentifiedLanguage[] = [];
-  private resetTime: number = 0;
-  private pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
+  private _identifiedLanguages: IdentifiedLanguageDisplay[] = [];
   private callbacks: TranslationStateCallbacks;
   private readyOnceCallbacks: Array<(id: string | null) => void> = [];
 
@@ -157,7 +155,7 @@ export class TranslationState {
     this.readyOnceCallbacks.push(callback);
   }
 
-  get identifiedLanguages(): IdentifiedLanguage[] {
+  get identifiedLanguages(): IdentifiedLanguageDisplay[] {
     return this._identifiedLanguages;
   }
 
@@ -200,7 +198,6 @@ export class TranslationState {
         break;
       }
       case "ready": {
-        this.resetReady(true);
         this.callbacks.onReady(message.ready.id);
         // Fire and clear one-time ready listeners
         const readyOnce = this.readyOnceCallbacks;
@@ -212,73 +209,43 @@ export class TranslationState {
       }
       case "speech_delimiter": {
         const { transcription, translation, time } = message.speech_delimiter;
+        console.log("[LT] Speech delimiter received, time:", time);
 
-        const targetTime = this.resetTime + time * 1000;
-        const currentTime = Date.now();
-        const delay = Math.max(0, targetTime - currentTime);
+        const oldTransBoundary = this.transcriptionsSpeechBoundary;
+        const oldTranslBoundary = this.translationsSpeechBoundary;
 
-        const timeoutId = setTimeout(() => {
-          const oldTransBoundary = this.transcriptionsSpeechBoundary;
-          const oldTranslBoundary = this.translationsSpeechBoundary;
+        this.transcriptionsSpeechBoundary = {
+          utteranceIdx: transcription.utterance_idx,
+          wordIdx: transcription.word_idx,
+          charIdx: transcription.char_idx,
+        };
+        this.translationsSpeechBoundary = {
+          utteranceIdx: translation.utterance_idx,
+          wordIdx: translation.word_idx,
+          charIdx: translation.char_idx,
+        };
 
-          this.transcriptionsSpeechBoundary = {
-            utteranceIdx: transcription.utterance_idx,
-            wordIdx: transcription.word_idx,
-            charIdx: transcription.char_idx,
-          };
-          this.translationsSpeechBoundary = {
-            utteranceIdx: translation.utterance_idx,
-            wordIdx: translation.word_idx,
-            charIdx: translation.char_idx,
-          };
-
-          this.pendingTimeouts = this.pendingTimeouts.filter(
-            (id) => id !== timeoutId,
-          );
-
-          // Notify all utterances affected by the boundary change
-          this.notifyAffectedUtterances(
-            oldTransBoundary,
-            this.transcriptionsSpeechBoundary,
-            oldTranslBoundary,
-            this.translationsSpeechBoundary,
-          );
-        }, delay);
-
-        this.pendingTimeouts.push(timeoutId);
+        this.notifyAffectedUtterances(
+          oldTransBoundary,
+          this.transcriptionsSpeechBoundary,
+          oldTranslBoundary,
+          this.translationsSpeechBoundary,
+        );
         break;
       }
       case "languages": {
-        this._identifiedLanguages = message.languages.languages;
+        this._identifiedLanguages = message.languages.languages.map((l) => ({
+          shortCode: l.short_code,
+          name: l.name,
+          probability: l.probability,
+        }));
         this.callbacks.onLanguagesChanged(this._identifiedLanguages);
         break;
       }
     }
   }
 
-  resetReady(ready = false): void {
-    // Clear all pending timeouts
-    for (const id of this.pendingTimeouts) {
-      clearTimeout(id);
-    }
-    this.pendingTimeouts = [];
-
-    this.resetTime = Date.now();
-    this.transcriptions = [];
-    this.translations = [];
-    this.transcriptionsSpeechBoundary = { ...ZERO_POSITION };
-    this.translationsSpeechBoundary = { ...ZERO_POSITION };
-
-    if (!ready) {
-      this._identifiedLanguages = [];
-    }
-  }
-
   destroy(): void {
-    for (const id of this.pendingTimeouts) {
-      clearTimeout(id);
-    }
-    this.pendingTimeouts = [];
     this.readyOnceCallbacks = [];
   }
 

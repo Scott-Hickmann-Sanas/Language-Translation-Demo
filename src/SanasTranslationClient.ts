@@ -3,7 +3,9 @@ import {
   ConnectionState,
   ConnectOptions,
   ConnectResult,
-  IdentifiedLanguage,
+  FetchLanguagesOptions,
+  IdentifiedLanguageDisplay,
+  Language,
   LTMessage,
   ResetOptions,
   SanasTranslationClientOptions,
@@ -12,7 +14,7 @@ import {
 } from "./types";
 
 type UtteranceCallback = (utterance: UtteranceDisplay, index: number) => void;
-type LanguagesCallback = (languages: IdentifiedLanguage[]) => void;
+type LanguagesCallback = (languages: IdentifiedLanguageDisplay[]) => void;
 type ConnectionStateCallback = (state: ConnectionState) => void;
 type ErrorCallback = (error: string) => void;
 
@@ -49,6 +51,9 @@ export class SanasTranslationClient {
   private _error: string | null = null;
   private _isAudioEnabled = true;
 
+  private audioContext: AudioContext | null = null;
+  private audioProcessor: ScriptProcessorNode | null = null;
+
   private utteranceCallbacks = new Set<UtteranceCallback>();
   private languagesCallbacks = new Set<LanguagesCallback>();
   private connectionStateCallbacks = new Set<ConnectionStateCallback>();
@@ -74,6 +79,8 @@ export class SanasTranslationClient {
         }
       },
       onReady: (id) => {
+        console.log("[LT] Ready received, resetting audioElapsed. id:", id);
+
         if (id !== null && this.pendingResets.has(id)) {
           this.pendingResets.get(id)!.resolve();
           this.pendingResets.delete(id);
@@ -268,8 +275,46 @@ export class SanasTranslationClient {
     this.setConnectionState("disconnected");
     this._error = null;
 
-    this.translationState.resetReady(false);
+    this.cleanupAudioTracking();
     this.translationState.destroy();
+  }
+
+  // --- REST API ---
+
+  async fetchLanguages(options?: FetchLanguagesOptions): Promise<Language[]> {
+    const headers: Record<string, string> = {};
+
+    if (this.options.accessToken) {
+      headers["Authorization"] = `Bearer ${this.options.accessToken}`;
+    } else if (this.options.apiKey) {
+      headers["X-API-Key"] = this.options.apiKey;
+    } else {
+      throw new Error("Missing credentials: provide apiKey or accessToken.");
+    }
+
+    if (options?.lang) {
+      headers["x-lang"] = options.lang;
+    }
+
+    const response = await fetch(`${this.options.endpoint}/v2/languages/list`, {
+      method: "POST",
+      headers,
+    });
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error("Authentication failed.");
+      }
+      throw new Error(`Failed to fetch languages: ${response.status}`);
+    }
+
+    const body = await response.json();
+    return (body.data.languages as Array<Record<string, string>>).map((l) => ({
+      longCode: l.long_code,
+      shortCode: l.short_code,
+      name: l.name,
+      support: l.support as Language["support"],
+    }));
   }
 
   // --- Messaging ---
@@ -291,7 +336,6 @@ export class SanasTranslationClient {
       },
     };
 
-    this.translationState.resetReady(false);
     this.sendMessage(message);
 
     return new Promise<void>((resolve, reject) => {
@@ -413,5 +457,16 @@ export class SanasTranslationClient {
     this._sessionId =
       typeof answer.session_id === "string" ? answer.session_id : null;
     await peer.setRemoteDescription(answer);
+  }
+
+  private cleanupAudioTracking(): void {
+    if (this.audioProcessor) {
+      this.audioProcessor.onaudioprocess = null;
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
+    }
+    this.audioContext = null;
+    this.audioProcessor = null;
   }
 }

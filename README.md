@@ -58,6 +58,23 @@ Creates a new client instance.
 | `accessToken` | `string` | OAuth token for authentication (use this or `apiKey`)  |
 | `endpoint`    | `string` | Server URL (e.g. `https://api.sanaslt.com`)            |
 
+### `client.fetchLanguages(options?): Promise<Language[]>`
+
+Fetches the list of available languages from the server. Can be called without connecting.
+
+| Option | Type     | Description                                                     |
+| ------ | -------- | --------------------------------------------------------------- |
+| `lang` | `string` | Language code for localized names (e.g. `"es-ES"`). Defaults to `"en-US"`. |
+
+Returns an array of `Language` objects:
+
+| Field       | Type     | Description                              |
+| ----------- | -------- | ---------------------------------------- |
+| `longCode`  | `string` | Full code with region (e.g. `"en-US"`)   |
+| `shortCode` | `string` | Short code (e.g. `"en"`)                 |
+| `name`      | `string` | Localized display name                   |
+| `support`   | `string` | Support tier: `"alpha"`, `"beta"`, or `"stable"` |
+
 ### `client.connect(options?): Promise<ConnectResult>`
 
 Establishes a WebRTC connection to the translation server. Requests microphone access unless a custom audio track is provided. Returns the translated audio stream.
@@ -131,7 +148,7 @@ client.onError((error) => {
 
 ## Test Client
 
-A browser-based test client is included in `test-client/index.html` for interactively testing the library against a live server.
+A browser-based test client is included in `examples/index.html` for interactively testing the library against a live server.
 
 To run it:
 
@@ -139,7 +156,7 @@ To run it:
 npx serve .
 ```
 
-Then open [http://localhost:3000/test-client/](http://localhost:3000/test-client/) in your browser. Enter your API key, configure source/target languages, and click **Connect** to start a live translation session.
+Then open [http://localhost:3000/examples/](http://localhost:3000/examples/) in your browser. Enter your API key, click **Fetch Languages** to see available languages, configure source/target languages, and click **Connect** to start a live translation session.
 
 ## Development
 
