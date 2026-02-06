@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sanas Translation Client - Test</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 24px;
+        background: #f5f5f5;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin-bottom: 24px;
+      }
+      .section {
+        background: #fff;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+      .section h2 {
+        font-size: 1rem;
+        margin: 0 0 12px;
+        color: #555;
+      }
+      label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 4px;
+        color: #444;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        margin-bottom: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+      }
+      .row > * {
+        flex: 1;
+      }
+      button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button:hover:not(:disabled) {
+        opacity: 0.85;
+      }
+      #connectBtn {
+        background: #2563eb;
+        color: #fff;
+      }
+      #disconnectBtn {
+        background: #dc2626;
+        color: #fff;
+      }
+      #resetBtn {
+        background: #16a34a;
+        color: #fff;
+      }
+      #muteBtn {
+        background: #737373;
+        color: #fff;
+      }
+      .btn-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .status-disconnected {
+        background: #fee2e2;
+        color: #dc2626;
+      }
+      .status-connecting {
+        background: #fef3c7;
+        color: #d97706;
+      }
+      .status-connected {
+        background: #dcfce7;
+        color: #16a34a;
+      }
+      #log {
+        font-family: "SF Mono", "Fira Code", monospace;
+        font-size: 0.8rem;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border-radius: 6px;
+        padding: 16px;
+        height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #log .log-error {
+        color: #f87171;
+      }
+      #log .log-info {
+        color: #60a5fa;
+      }
+      #log .log-success {
+        color: #4ade80;
+      }
+      .utterance {
+        border-left: 3px solid #2563eb;
+        padding: 8px 12px;
+        margin-bottom: 8px;
+        background: #f8fafc;
+        border-radius: 0 6px 6px 0;
+      }
+      .utterance .label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+      }
+      .utterance .spoken {
+        color: #1a1a1a;
+      }
+      .utterance .unspoken {
+        color: #94a3b8;
+      }
+      #utterances:empty::after {
+        content: "Utterances will appear here once translation starts...";
+        color: #94a3b8;
+        font-style: italic;
+      }
+      .info-row {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .info-row span {
+        font-size: 0.85rem;
+      }
+      .info-label {
+        color: #64748b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Sanas Translation Test Client</h1>
+
+    <div class="section">
+      <h2>Configuration</h2>
+      <label for="apiKey">API Key</label>
+      <input type="password" id="apiKey" placeholder="Enter your API key" />
+      <div class="row">
+        <div>
+          <label for="langIn">Source Language</label>
+          <input type="text" id="langIn" value="en-US" placeholder="e.g. en-US" />
+        </div>
+        <div>
+          <label for="langOut">Target Language</label>
+          <input type="text" id="langOut" value="es-ES" placeholder="e.g. es-ES" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="conversationId">Conversation ID (optional)</label>
+          <input type="text" id="conversationId" placeholder="e.g. test-123" />
+        </div>
+        <div>
+          <label for="userName">User Name (optional)</label>
+          <input type="text" id="userName" placeholder="e.g. Test User" />
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Controls</h2>
+      <div class="btn-row">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+        <button id="resetBtn" disabled>Reset Translation</button>
+        <button id="muteBtn" disabled>Mute</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Status</h2>
+      <div class="info-row">
+        <span><span class="info-label">Connection:</span> <span id="statusBadge" class="status-badge status-disconnected">disconnected</span></span>
+        <span><span class="info-label">Session:</span> <span id="sessionId">—</span></span>
+        <span><span class="info-label">Languages:</span> <span id="detectedLangs">—</span></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Utterances</h2>
+      <div id="utterances"></div>
+    </div>
+
+    <div class="section">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+
+    <audio id="audioPlayer" autoplay></audio>
+
+    <script type="module">
+      import { SanasTranslationClient } from "../dist/index.js";
+
+      const ENDPOINT = "https://api.sanaslt.com";
+
+      // DOM elements
+      const apiKeyInput = document.getElementById("apiKey");
+      const langInInput = document.getElementById("langIn");
+      const langOutInput = document.getElementById("langOut");
+      const conversationIdInput = document.getElementById("conversationId");
+      const userNameInput = document.getElementById("userName");
+      const connectBtn = document.getElementById("connectBtn");
+      const disconnectBtn = document.getElementById("disconnectBtn");
+      const resetBtn = document.getElementById("resetBtn");
+      const muteBtn = document.getElementById("muteBtn");
+      const statusBadge = document.getElementById("statusBadge");
+      const sessionIdSpan = document.getElementById("sessionId");
+      const detectedLangsSpan = document.getElementById("detectedLangs");
+      const utterancesDiv = document.getElementById("utterances");
+      const logDiv = document.getElementById("log");
+      const audioPlayer = document.getElementById("audioPlayer");
+
+      let client = null;
+      let unsubscribers = [];
+
+      // Logging
+      function log(message, type = "") {
+        const line = document.createElement("div");
+        if (type) line.className = `log-${type}`;
+        const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
+        line.textContent = `[${ts}] ${message}`;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+
+      // Status badge update
+      function updateStatus(state) {
+        statusBadge.textContent = state;
+        statusBadge.className = `status-badge status-${state}`;
+      }
+
+      // Render an utterance
+      function renderUtterance(utterance, index) {
+        let el = document.getElementById(`utterance-${index}`);
+        if (!el) {
+          el = document.createElement("div");
+          el.className = "utterance";
+          el.id = `utterance-${index}`;
+          el.innerHTML = `
+            <div><span class="label">Transcription</span></div>
+            <div class="transcription"></div>
+            <div style="margin-top:4px"><span class="label">Translation</span></div>
+            <div class="translation"></div>
+          `;
+          utterancesDiv.appendChild(el);
+        }
+
+        const tDiv = el.querySelector(".transcription");
+        const trDiv = el.querySelector(".translation");
+
+        tDiv.innerHTML = `<span class="spoken">${esc(utterance.transcription.spokenText)}</span><span class="unspoken">${esc(utterance.transcription.unspokenText)}</span>`;
+        trDiv.innerHTML = `<span class="spoken">${esc(utterance.translation.spokenText)}</span><span class="unspoken">${esc(utterance.translation.unspokenText)}</span>`;
+      }
+
+      function esc(str) {
+        const d = document.createElement("div");
+        d.textContent = str;
+        return d.innerHTML;
+      }
+
+      // Connect
+      connectBtn.addEventListener("click", async () => {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) {
+          log("Please enter an API key.", "error");
+          return;
+        }
+
+        client = new SanasTranslationClient({
+          apiKey,
+          endpoint: ENDPOINT,
+        });
+
+        log(`Created client (endpoint: ${ENDPOINT})`, "info");
+
+        // Subscribe to events
+        unsubscribers.push(
+          client.onConnectionStateChange((state) => {
+            log(`Connection state: ${state}`, "info");
+            updateStatus(state);
+            updateButtons(state);
+          })
+        );
+
+        unsubscribers.push(
+          client.onUtterance((utterance, index) => {
+            renderUtterance(utterance, index);
+          })
+        );
+
+        unsubscribers.push(
+          client.onLanguages((languages) => {
+            const display = languages
+              .map((l) => `${l.language} (${(l.confidence * 100).toFixed(0)}%)`)
+              .join(", ");
+            detectedLangsSpan.textContent = display;
+            log(`Detected languages: ${display}`, "info");
+          })
+        );
+
+        unsubscribers.push(
+          client.onError((error) => {
+            log(`Error: ${error}`, "error");
+          })
+        );
+
+        connectBtn.disabled = true;
+        log("Connecting...");
+
+        try {
+          const connectOptions = {};
+          const convId = conversationIdInput.value.trim();
+          const uName = userNameInput.value.trim();
+          if (convId) connectOptions.conversationId = convId;
+          if (uName) connectOptions.userName = uName;
+
+          const { audio } = await client.connect(connectOptions);
+          audioPlayer.srcObject = audio;
+          log("Connected and receiving audio.", "success");
+          sessionIdSpan.textContent = client.sessionId ?? "—";
+
+          // Auto-reset with configured languages
+          const langIn = langInInput.value.trim();
+          const langOut = langOutInput.value.trim();
+          if (langIn && langOut) {
+            log(`Sending reset (${langIn} → ${langOut})...`, "info");
+            await client.reset({ langIn, langOut });
+            log("Reset complete. Translation active.", "success");
+          }
+        } catch (err) {
+          log(`Connection failed: ${err.message}`, "error");
+          cleanup();
+        }
+      });
+
+      // Disconnect
+      disconnectBtn.addEventListener("click", () => {
+        if (client) {
+          client.disconnect();
+          log("Disconnected.", "info");
+        }
+        cleanup();
+      });
+
+      // Reset translation
+      resetBtn.addEventListener("click", async () => {
+        if (!client) return;
+        const langIn = langInInput.value.trim();
+        const langOut = langOutInput.value.trim();
+        if (!langIn || !langOut) {
+          log("Please enter source and target languages.", "error");
+          return;
+        }
+        try {
+          log(`Resetting translation (${langIn} → ${langOut})...`, "info");
+          await client.reset({ langIn, langOut });
+          log("Reset complete.", "success");
+        } catch (err) {
+          log(`Reset failed: ${err.message}`, "error");
+        }
+      });
+
+      // Mute toggle
+      muteBtn.addEventListener("click", () => {
+        if (!client) return;
+        client.isAudioEnabled = !client.isAudioEnabled;
+        muteBtn.textContent = client.isAudioEnabled ? "Mute" : "Unmute";
+        log(`Microphone ${client.isAudioEnabled ? "unmuted" : "muted"}.`, "info");
+      });
+
+      function updateButtons(state) {
+        const connected = state === "connected";
+        connectBtn.disabled = state !== "disconnected";
+        disconnectBtn.disabled = !connected;
+        resetBtn.disabled = !connected;
+        muteBtn.disabled = !connected;
+      }
+
+      function cleanup() {
+        for (const unsub of unsubscribers) unsub();
+        unsubscribers = [];
+        client = null;
+        updateStatus("disconnected");
+        updateButtons("disconnected");
+        sessionIdSpan.textContent = "—";
+        detectedLangsSpan.textContent = "—";
+        muteBtn.textContent = "Mute";
+        audioPlayer.srcObject = null;
+      }
+    </script>
+  </body>
+</html>

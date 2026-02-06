@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "esnext",
+    "target": "es2015",
+    "lib": ["esnext", "dom"],
+    "sourceMap": true,
+    "allowJs": true,
+    "declaration": true,
+    "moduleResolution": "node",
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "strict": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "example", "rollup.config.js"]
+}

@@ -1,0 +1,73 @@
+{
+  "name": "@sanas-ai/language-translation",
+  "version": "0.2.2",
+  "description": "Javascript client side library for Sanas Language Translation",
+  "author": {
+    "name": "Scott Hickmann",
+    "email": "scott.hickmann@sanas.ai"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": "https://github.com/Scott-Hickmann-Sanas/language-translation-js",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "node": ">=8",
+    "npm": ">=5"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "db:types": "cp ../translation-mobile-app-backend/lib/database.types.ts src/lib/database.types.ts && prettier --write src/lib/database.types.ts",
+    "build": "rm -rf dist && rm -rf node_modules/.cache && npm run typecheck && rollup -c",
+    "start": "rollup -c -w",
+    "test": "jest"
+  },
+  "jest": {
+    "transform": {
+      ".(ts)": "ts-jest"
+    },
+    "testRegex": "(/__tests__/.*|\\.(test|spec))\\.(ts|js)$",
+    "moduleFileExtensions": [
+      "ts",
+      "js"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/dist/"
+    ]
+  },
+  "dependencies": {
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.40.0",
+    "@typescript-eslint/parser": "^8.40.0",
+    "babel-core": "^6.26.3",
+    "babel-runtime": "^6.26.0",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "globals": "^16.3.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.6.2",
+    "rollup": "^4.47.1",
+    "rollup-plugin-sass": "^1.15.3",
+    "rollup-plugin-typescript2": "^0.36.0",
+    "ts-jest": "^29.4.1",
+    "typescript": "^5.9.2"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "typescript",
+    "npm"
+  ]
+}
