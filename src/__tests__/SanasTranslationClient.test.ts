@@ -166,7 +166,7 @@ async function flush() {
 
 /**
  * Performs a full connect flow: triggers negotiation, waits for server exchange,
- * simulates audio track, and sends ready message.
+ * and simulates receiving the translated audio track.
  */
 async function connectClient(client: SanasTranslationClient) {
   setupSuccessfulConnect();
@@ -176,14 +176,11 @@ async function connectClient(client: SanasTranslationClient) {
   // Wait for negotiation + fetch + setRemoteDescription chain to complete
   await flush();
 
-  // Simulate server sending audio track
+  // Simulate server sending translated audio track (resolves connect)
   getPeer(client).simulateTrack();
 
-  // Simulate ready message via data channel
+  // Open the data channel for subsequent messaging (reset, etc.)
   mockDataChannel.simulateOpen();
-  mockDataChannel.simulateMessage(
-    JSON.stringify({ type: "ready", ready: { id: null } }),
-  );
 
   return connectPromise;
 }
@@ -257,12 +254,8 @@ describe("SanasTranslationClient", () => {
       // Should NOT have called getUserMedia
       expect(mockGetUserMedia).not.toHaveBeenCalled();
 
-      // Resolve connect
+      // Resolve connect (just needs audio track, no ready message)
       getPeer(client).simulateTrack();
-      mockDataChannel.simulateOpen();
-      mockDataChannel.simulateMessage(
-        JSON.stringify({ type: "ready", ready: { id: null } }),
-      );
       await connectPromise;
 
       client.disconnect();
@@ -392,10 +385,6 @@ describe("SanasTranslationClient", () => {
       await flush();
 
       getPeer(client).simulateTrack();
-      mockDataChannel.simulateOpen();
-      mockDataChannel.simulateMessage(
-        JSON.stringify({ type: "ready", ready: { id: null } }),
-      );
 
       await connectPromise;
 
@@ -473,10 +462,6 @@ describe("SanasTranslationClient", () => {
       await flush();
 
       getPeer(client).simulateTrack();
-      mockDataChannel.simulateOpen();
-      mockDataChannel.simulateMessage(
-        JSON.stringify({ type: "ready", ready: { id: null } }),
-      );
       await connectPromise;
 
       client.isAudioEnabled = false;
@@ -574,12 +559,8 @@ describe("SanasTranslationClient", () => {
       // After server answer, peer connection goes to "connected"
       expect(callback).toHaveBeenCalledWith("connected");
 
-      // Resolve connect fully
+      // Resolve connect (just needs audio track)
       getPeer(client).simulateTrack();
-      mockDataChannel.simulateOpen();
-      mockDataChannel.simulateMessage(
-        JSON.stringify({ type: "ready", ready: { id: null } }),
-      );
       await connectPromise;
 
       callback.mockClear();
@@ -668,14 +649,16 @@ describe("SanasTranslationClient", () => {
       );
       expect(resetCallsAfter).toHaveLength(1);
 
-      // Resolve the ready for both connect and reset
+      // Resolve connect (needs audio track)
       getPeer(client).simulateTrack();
+      await connectPromise;
+
+      // Resolve reset (needs ready message with matching ID)
       const resetId = JSON.parse(resetCallsAfter[0][0]).reset.id;
       mockDataChannel.simulateMessage(
         JSON.stringify({ type: "ready", ready: { id: resetId } }),
       );
-
-      await Promise.all([connectPromise, resetPromise]);
+      await resetPromise;
 
       client.disconnect();
     });

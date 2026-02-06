@@ -199,7 +199,7 @@ export class TranslationState {
         }
         break;
       }
-      case "ready":
+      case "ready": {
         this.resetReady(true);
         this.callbacks.onReady(message.ready.id);
         // Fire and clear one-time ready listeners
@@ -209,6 +209,7 @@ export class TranslationState {
           cb(message.ready.id);
         }
         break;
+      }
       case "speech_delimiter": {
         const { transcription, translation, time } = message.speech_delimiter;
 

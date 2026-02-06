@@ -192,14 +192,13 @@ export class SanasTranslationClient {
       }
     }
 
-    // Wait for translated audio and ready message
+    // Wait for translated audio track and WebRTC connection
     return new Promise<ConnectResult>((resolve, reject) => {
       let translatedAudio: MediaStream | null = null;
-      let readyReceived = false;
       let connectFailed = false;
 
       const tryResolve = () => {
-        if (translatedAudio && readyReceived && !connectFailed) {
+        if (translatedAudio && !connectFailed) {
           resolve({ audio: translatedAudio });
         }
       };
@@ -216,7 +215,7 @@ export class SanasTranslationClient {
 
         if (peer.connectionState === "failed") {
           this.setError("Disconnected from server.");
-          if (!readyReceived) {
+          if (!connectFailed) {
             connectFailed = true;
             reject(new Error(this._error!));
           }
@@ -228,18 +227,10 @@ export class SanasTranslationClient {
         }
       };
 
-      // Listen for the initial ready message to resolve connect()
-      this.translationState.onReadyOnce(() => {
-        if (!readyReceived) {
-          readyReceived = true;
-          tryResolve();
-        }
-      });
-
       // Negotiate with server
       peer.onnegotiationneeded = () => {
         this.connectToServer(peer, options).catch((err) => {
-          if (!readyReceived) {
+          if (!connectFailed) {
             connectFailed = true;
             reject(err);
           }
