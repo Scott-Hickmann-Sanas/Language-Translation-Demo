@@ -132,7 +132,7 @@ unsub(); // stop listening
 
 // Fired when languages are detected
 client.onLanguages((languages) => {
-  // languages: Array<{ language: string, confidence: number }>
+  // languages: Array<{ shortCode: string, name: string, probability: number }>
 });
 
 // Fired when connection state changes
