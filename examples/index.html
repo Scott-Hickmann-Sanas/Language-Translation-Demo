@@ -246,6 +246,10 @@
         </div>
       </div>
       <div class="checkbox-row">
+        <input type="checkbox" id="canLangSwap" />
+        <label for="canLangSwap">Can lang swap</label>
+      </div>
+      <div class="checkbox-row">
         <input type="checkbox" id="detectLangs" />
         <label for="detectLangs">Enable language detection</label>
       </div>
@@ -305,6 +309,7 @@
       const disconnectBtn = document.getElementById("disconnectBtn");
       const resetBtn = document.getElementById("resetBtn");
       const muteBtn = document.getElementById("muteBtn");
+      const canLangSwapCheckbox = document.getElementById("canLangSwap");
       const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
       const sessionIdSpan = document.getElementById("sessionId");
@@ -461,9 +466,10 @@
           const langIn = langInInput.value.trim();
           const langOut = langOutInput.value.trim();
           if (langIn && langOut) {
+            const canLangSwap = canLangSwapCheckbox.checked;
             const detectLanguages = detectLangsCheckbox.checked;
-            log(`Sending reset (${langIn} → ${langOut}, detectLanguages: ${detectLanguages})...`, "info");
-            await client.reset({ langIn, langOut, detectLanguages });
+            log(`Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
+            await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
             log("Reset complete. Translation active.", "success");
           }
         } catch (err) {
@@ -491,9 +497,10 @@
           return;
         }
         try {
+          const canLangSwap = canLangSwapCheckbox.checked;
           const detectLanguages = detectLangsCheckbox.checked;
-          log(`Resetting translation (${langIn} → ${langOut}, detectLanguages: ${detectLanguages})...`, "info");
-          await client.reset({ langIn, langOut, detectLanguages });
+          log(`Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
+          await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
           log("Reset complete.", "success");
         } catch (err) {
           log(`Reset failed: ${err.message}`, "error");
