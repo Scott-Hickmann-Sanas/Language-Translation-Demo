@@ -397,4 +397,221 @@ describe("TranslationState", () => {
       expect(display.translation.unspokenText).toBe("");
     });
   });
+
+  describe("invisible utterances (non-contiguous utterance indices)", () => {
+    it("handles utterance index gaps in transcriptions", () => {
+      const state = new TranslationState(makeCallbacks());
+
+      // Utterance 0 arrives, then utterance 2 (skipping invisible utterance 1)
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("hello")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("world")],
+          partial: [],
+          utterance_idx: 2,
+        },
+      });
+
+      const result = state.getState();
+      expect(result.utterances).toHaveLength(2);
+      expect(result.utterances[0].transcription.complete).toEqual([
+        makeWord("hello"),
+      ]);
+      expect(result.utterances[1].transcription.complete).toEqual([
+        makeWord("world"),
+      ]);
+    });
+
+    it("pairs translations correctly when utterance indices have gaps", () => {
+      const state = new TranslationState(makeCallbacks());
+
+      // Transcription for utterance 0 and 2 (gap at 1)
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("hello")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("world")],
+          partial: [],
+          utterance_idx: 2,
+        },
+      });
+
+      // Translations for utterance 0 and 2
+      state.handleMessage({
+        type: "translation",
+        translation: {
+          complete: [makeWord("hola")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "translation",
+        translation: {
+          complete: [makeWord("mundo")],
+          partial: [],
+          utterance_idx: 2,
+        },
+      });
+
+      const result = state.getState();
+      expect(result.utterances).toHaveLength(2);
+      expect(result.utterances[0].translation.complete).toEqual([
+        makeWord("hola"),
+      ]);
+      expect(result.utterances[1].translation.complete).toEqual([
+        makeWord("mundo"),
+      ]);
+    });
+
+    it("computes speech boundary correctly with non-contiguous indices", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      // Utterance 0 and utterance 3 (gap at 1, 2)
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("hello")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("world")],
+          partial: [],
+          utterance_idx: 3,
+        },
+      });
+
+      // Speech delimiter pointing into utterance 3
+      state.handleMessage({
+        type: "speech_delimiter",
+        speech_delimiter: {
+          time: 1.0,
+          transcription: { utterance_idx: 3, word_idx: 0, char_idx: 3 },
+          translation: { utterance_idx: 3, word_idx: 0, char_idx: 3 },
+        },
+      });
+
+      // Utterance 0 (server idx 0) should be entirely spoken
+      // since boundary is at utterance 3 which is past utterance 0
+      const display0 = state.getUtteranceDisplay(0);
+      expect(display0.transcription.spokenText).toBe("hello");
+      expect(display0.transcription.unspokenText).toBe("");
+
+      // Utterance at array index 1 (server idx 3) should be split at char 3
+      const display1 = state.getUtteranceDisplay(1);
+      expect(display1.transcription.spokenText).toBe("wor");
+      expect(display1.transcription.unspokenText).toBe("ld");
+    });
+
+    it("notifies correct utterances on speech_delimiter with gaps", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      // Utterances 0, 2, 5 (gaps at 1, 3, 4)
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("a")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("b")],
+          partial: [],
+          utterance_idx: 2,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("c")],
+          partial: [],
+          utterance_idx: 5,
+        },
+      });
+
+      (callbacks.onUtteranceChanged as jest.Mock).mockClear();
+
+      // Speech delimiter spanning from utterance 0 to utterance 2
+      state.handleMessage({
+        type: "speech_delimiter",
+        speech_delimiter: {
+          time: 1.0,
+          transcription: { utterance_idx: 2, word_idx: 0, char_idx: 0 },
+          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+        },
+      });
+
+      // Should notify utterances with server idx 0 and 2 (array idx 0 and 1)
+      // but NOT utterance with server idx 5 (array idx 2)
+      const calls = (callbacks.onUtteranceChanged as jest.Mock).mock.calls;
+      const notifiedArrayIndices = calls.map(
+        (call: [unknown, number]) => call[1],
+      );
+      expect(notifiedArrayIndices).toContain(0);
+      expect(notifiedArrayIndices).toContain(1);
+      expect(notifiedArrayIndices).not.toContain(2);
+    });
+
+    it("merges words into correct utterance with non-contiguous indices", () => {
+      const state = new TranslationState(makeCallbacks());
+
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("hello")],
+          partial: [],
+          utterance_idx: 0,
+        },
+      });
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("world")],
+          partial: [],
+          utterance_idx: 3,
+        },
+      });
+
+      // Second message for utterance 3 should merge
+      state.handleMessage({
+        type: "transcription",
+        transcription: {
+          complete: [makeWord("!")],
+          partial: [],
+          utterance_idx: 3,
+        },
+      });
+
+      const result = state.getState();
+      expect(result.utterances).toHaveLength(2);
+      expect(result.utterances[1].transcription.complete).toEqual([
+        makeWord("world"),
+        makeWord("!"),
+      ]);
+    });
+  });
 });

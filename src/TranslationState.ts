@@ -67,12 +67,12 @@ function positionLessThan(a: CharacterPosition, b: CharacterPosition): boolean {
 }
 
 /**
- * Compute spoken/unspoken text for a single utterance given its array index
- * and the global speech boundary.
+ * Compute spoken/unspoken text for a single utterance given its server
+ * utterance index and the global speech boundary.
  */
 function computeSpeechDividedText(
   utterance: Utterance,
-  arrayIdx: number,
+  utteranceIdx: number,
   boundary: CharacterPosition,
 ): { spokenText: string; unspokenText: string } {
   let spokenText = "";
@@ -84,7 +84,7 @@ function computeSpeechDividedText(
     if (!word) continue;
     for (let charIdx = 0; charIdx < word.word.length; charIdx++) {
       const pos: CharacterPosition = {
-        utteranceIdx: arrayIdx,
+        utteranceIdx,
         wordIdx,
         charIdx,
       };
@@ -101,7 +101,7 @@ function computeSpeechDividedText(
 
 function buildUtteranceStreamDisplay(
   utterance: Utterance | undefined,
-  arrayIdx: number,
+  utteranceIdx: number,
   boundary: CharacterPosition,
 ): UtteranceStreamDisplay {
   if (!utterance) {
@@ -115,7 +115,7 @@ function buildUtteranceStreamDisplay(
 
   const { spokenText, unspokenText } = computeSpeechDividedText(
     utterance,
-    arrayIdx,
+    utteranceIdx,
     boundary,
   );
 
@@ -251,19 +251,20 @@ export class TranslationState {
 
   getUtteranceDisplay(index: number): UtteranceDisplay {
     const transcription = this.transcriptions[index];
+    const transcriptionUtteranceIdx = transcription?.idx ?? index;
     const translation = this.findTranslationForUtterance(
-      transcription?.idx ?? index,
+      transcriptionUtteranceIdx,
     );
 
     return {
       transcription: buildUtteranceStreamDisplay(
         transcription,
-        index,
+        transcriptionUtteranceIdx,
         this.transcriptionsSpeechBoundary,
       ),
       translation: buildUtteranceStreamDisplay(
         translation?.utterance,
-        translation?.arrayIdx ?? index,
+        translation?.utterance?.idx ?? transcriptionUtteranceIdx,
         this.translationsSpeechBoundary,
       ),
     };
@@ -314,22 +315,28 @@ export class TranslationState {
     oldTranslBoundary: CharacterPosition,
     newTranslBoundary: CharacterPosition,
   ): void {
-    // Determine the range of utterance array indices that could be affected
-    const minIdx = Math.min(
+    // Determine the range of server utterance indices that could be affected
+    const minUtteranceIdx = Math.min(
       oldTransBoundary.utteranceIdx,
       newTransBoundary.utteranceIdx,
       oldTranslBoundary.utteranceIdx,
       newTranslBoundary.utteranceIdx,
     );
-    const maxIdx = Math.max(
+    const maxUtteranceIdx = Math.max(
       oldTransBoundary.utteranceIdx,
       newTransBoundary.utteranceIdx,
       oldTranslBoundary.utteranceIdx,
       newTranslBoundary.utteranceIdx,
     );
 
-    for (let i = minIdx; i <= maxIdx && i < this.transcriptions.length; i++) {
-      this.callbacks.onUtteranceChanged(this.getUtteranceDisplay(i), i);
+    // Iterate over array positions and check if their server utterance index
+    // falls within the affected range (utterance indices may not be contiguous
+    // due to invisible/empty utterances that are never sent).
+    for (let i = 0; i < this.transcriptions.length; i++) {
+      const serverIdx = this.transcriptions[i].idx;
+      if (serverIdx >= minUtteranceIdx && serverIdx <= maxUtteranceIdx) {
+        this.callbacks.onUtteranceChanged(this.getUtteranceDisplay(i), i);
+      }
     }
   }
 }
