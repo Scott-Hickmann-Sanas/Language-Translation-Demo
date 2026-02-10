@@ -177,7 +177,7 @@ describe("TranslationState", () => {
       expect(callbacks.onReady).toHaveBeenCalledWith("test-id");
     });
 
-    it("resets state on ready message", () => {
+    it("preserves utterances on ready message", () => {
       const callbacks = makeCallbacks();
       const state = new TranslationState(callbacks);
 
@@ -198,7 +198,8 @@ describe("TranslationState", () => {
         ready: { id: "r1" },
       });
 
-      expect(state.getState().utterances).toHaveLength(0);
+      // Backend does not reset utterance indices on ready, so state is preserved
+      expect(state.getState().utterances).toHaveLength(1);
     });
   });
 
@@ -235,9 +236,14 @@ describe("TranslationState", () => {
         languages: { languages: langs },
       });
 
-      expect(state.identifiedLanguages).toEqual(langs);
-      expect(state.getState().identifiedLanguages).toEqual(langs);
-      expect(callbacks.onLanguagesChanged).toHaveBeenCalledWith(langs);
+      const expected = [
+        { shortCode: "en", name: "English", probability: 0.95 },
+        { shortCode: "es", name: "Spanish", probability: 0.05 },
+      ];
+
+      expect(state.identifiedLanguages).toEqual(expected);
+      expect(state.getState().identifiedLanguages).toEqual(expected);
+      expect(callbacks.onLanguagesChanged).toHaveBeenCalledWith(expected);
     });
   });
 
@@ -305,7 +311,7 @@ describe("TranslationState", () => {
   });
 
   describe("resetReady", () => {
-    it("clears all state and pending delimiters", () => {
+    it("preserves utterances and delimiters across ready", () => {
       const callbacks = makeCallbacks();
       const state = new TranslationState(callbacks);
 
@@ -318,7 +324,7 @@ describe("TranslationState", () => {
         },
       });
 
-      // Queue a delimiter
+      // Apply a delimiter
       state.handleMessage({
         type: "speech_delimiter",
         speech_delimiter: {
@@ -328,11 +334,17 @@ describe("TranslationState", () => {
         },
       });
 
-      expect(state.getState().utterances).toHaveLength(0);
-      expect(state.identifiedLanguages).toEqual([]);
+      // Send a ready message — backend does not reset utterance indices
+      state.handleMessage({
+        type: "ready",
+        ready: { id: "r1" },
+      });
 
-      // Advancing audio progress should not cause errors (delimiters were cleared)
-      (callbacks.onUtteranceChanged as jest.Mock).mockClear();
+      // Utterances and speech boundary are preserved
+      expect(state.getState().utterances).toHaveLength(1);
+      expect(state.getState().utterances[0].transcription.spokenText).toBe(
+        "hello",
+      );
     });
 
     it("preserves identified languages when ready=true", () => {

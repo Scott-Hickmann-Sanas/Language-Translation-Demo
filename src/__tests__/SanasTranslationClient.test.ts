@@ -567,7 +567,7 @@ describe("SanasTranslationClient", () => {
       );
 
       expect(callback).toHaveBeenCalledWith([
-        { short_code: "en", name: "English", probability: 0.9 },
+        { shortCode: "en", name: "English", probability: 0.9 },
       ]);
 
       client.disconnect();
