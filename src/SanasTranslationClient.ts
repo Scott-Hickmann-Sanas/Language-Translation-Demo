@@ -52,7 +52,8 @@ export class SanasTranslationClient {
   private _isAudioEnabled = true;
 
   private audioContext: AudioContext | null = null;
-  private audioProcessor: ScriptProcessorNode | null = null;
+  private audioStreamStartTime = 0;
+  private scheduledDelimiterNodes: AudioBufferSourceNode[] = [];
 
   private utteranceCallbacks = new Set<UtteranceCallback>();
   private languagesCallbacks = new Set<LanguagesCallback>();
@@ -80,6 +81,10 @@ export class SanasTranslationClient {
       },
       onReady: (id) => {
         console.log("[LT] Ready received, resetting audioElapsed. id:", id);
+
+        // Record the audio epoch for scheduling speech delimiters
+        this.audioStreamStartTime = this.audioContext?.currentTime ?? 0;
+        this.cancelScheduledDelimiters();
 
         if (id !== null && this.pendingResets.has(id)) {
           this.pendingResets.get(id)!.resolve();
@@ -158,6 +163,14 @@ export class SanasTranslationClient {
       this.audioTrack.enabled = this._isAudioEnabled;
     }
 
+    // Create AudioContext during user gesture so it starts in "running" state
+    // (Chrome suspends contexts created outside a gesture).
+    // The AudioContext is used as a synchronized clock for scheduling speech
+    // delimiters — audio playback still goes through the raw WebRTC stream.
+    const ctx = new AudioContext();
+    this.audioContext = ctx;
+    await ctx.resume();
+
     // Create RTCPeerConnection
     const peer = new RTCPeerConnection();
     this.peerConnection = peer;
@@ -184,7 +197,11 @@ export class SanasTranslationClient {
     dc.onmessage = (event: MessageEvent) => {
       try {
         const message = LTMessage.parse(JSON.parse(event.data));
-        this.translationState.handleMessage(message);
+        if (message.type === "speech_delimiter") {
+          this.scheduleSpeechDelimiter(message);
+        } else {
+          this.translationState.handleMessage(message);
+        }
       } catch (e) {
         console.error("Failed to parse message from data channel:", e);
       }
@@ -206,6 +223,14 @@ export class SanasTranslationClient {
 
       const tryResolve = () => {
         if (translatedAudio && !connectFailed) {
+          // Feed remote audio into the AudioContext through a silent gain so
+          // its clock stays in sync with the stream, but actual playback goes
+          // through the raw WebRTC stream set on an <audio> element by the caller.
+          const source = ctx.createMediaStreamSource(translatedAudio);
+          const silentGain = ctx.createGain();
+          silentGain.gain.value = 0;
+          source.connect(silentGain);
+          silentGain.connect(ctx.destination);
           resolve({ audio: translatedAudio });
         }
       };
@@ -459,14 +484,57 @@ export class SanasTranslationClient {
     await peer.setRemoteDescription(answer);
   }
 
-  private cleanupAudioTracking(): void {
-    if (this.audioProcessor) {
-      this.audioProcessor.onaudioprocess = null;
+  private scheduleSpeechDelimiter(message: LTMessage): void {
+    if (!this.audioContext) {
+      // No audio context — apply immediately
+      this.translationState.handleMessage(message);
+      return;
     }
+
+    if (message.type !== "speech_delimiter") return;
+
+    const ctx = this.audioContext;
+    const scheduledTime =
+      this.audioStreamStartTime + message.speech_delimiter.time;
+
+    // Create a 1-sample silent buffer source to schedule the callback
+    const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+
+    source.onended = () => {
+      // Remove from tracking array
+      const idx = this.scheduledDelimiterNodes.indexOf(source);
+      if (idx !== -1) {
+        this.scheduledDelimiterNodes.splice(idx, 1);
+      }
+      this.translationState.handleMessage(message);
+    };
+
+    source.start(scheduledTime);
+    this.scheduledDelimiterNodes.push(source);
+  }
+
+  private cancelScheduledDelimiters(): void {
+    for (const node of this.scheduledDelimiterNodes) {
+      node.onended = null;
+      try {
+        node.stop();
+      } catch {
+        // Already stopped
+      }
+      node.disconnect();
+    }
+    this.scheduledDelimiterNodes = [];
+  }
+
+  private cleanupAudioTracking(): void {
+    this.cancelScheduledDelimiters();
     if (this.audioContext) {
       this.audioContext.close();
     }
     this.audioContext = null;
-    this.audioProcessor = null;
+    this.audioStreamStartTime = 0;
   }
 }

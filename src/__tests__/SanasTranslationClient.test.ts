@@ -103,23 +103,40 @@ class MockGainNode {
   disconnect = jest.fn();
 }
 
-class MockScriptProcessorNode {
-  onaudioprocess: ((event: unknown) => void) | null = null;
-  bufferSize = 4096;
-  connect = jest.fn();
-  disconnect = jest.fn();
-}
-
 class MockAudioSourceNode {
   connect = jest.fn();
   disconnect = jest.fn();
 }
 
+class MockAudioBufferSourceNode {
+  buffer: unknown = null;
+  onended: (() => void) | null = null;
+  connect = jest.fn();
+  disconnect = jest.fn();
+  start = jest.fn(() => {
+    // Simulate the buffer finishing playback in the next microtask
+    queueMicrotask(() => this.onended?.());
+  });
+  stop = jest.fn();
+}
+
+class MockAudioDestinationNode {}
+
+/** Track all created buffer source nodes for test assertions. */
+let createdBufferSourceNodes: MockAudioBufferSourceNode[] = [];
+
 class MockAudioContext {
   sampleRate = 48000;
+  currentTime = 0;
   state = "running";
+  destination = new MockAudioDestinationNode();
   createMediaStreamSource = jest.fn(() => new MockAudioSourceNode());
-  createScriptProcessor = jest.fn(() => new MockScriptProcessorNode());
+  createBuffer = jest.fn(() => ({}));
+  createBufferSource = jest.fn(() => {
+    const node = new MockAudioBufferSourceNode();
+    createdBufferSourceNodes.push(node);
+    return node;
+  });
   createGain = jest.fn(() => new MockGainNode());
   resume = jest.fn(() => Promise.resolve());
   close = jest.fn(() => Promise.resolve());
@@ -222,6 +239,7 @@ async function connectClient(client: SanasTranslationClient) {
 describe("SanasTranslationClient", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    createdBufferSourceNodes = [];
   });
 
   describe("constructor", () => {
@@ -836,6 +854,177 @@ describe("SanasTranslationClient", () => {
       await resetPromise;
 
       client.disconnect();
+    });
+  });
+
+  describe("speech delimiter scheduling", () => {
+    it("schedules a speech delimiter via AudioBufferSourceNode", async () => {
+      const client = createClient();
+      await connectClient(client);
+
+      // Send a transcription so there's something to mark as spoken
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "transcription",
+          transcription: {
+            complete: [{ word: "hello", start: 0, end: 1 }],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      // Send a speech delimiter — should create an AudioBufferSourceNode
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 0.5,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      // A buffer source node should have been created and started
+      expect(createdBufferSourceNodes).toHaveLength(1);
+      const node = createdBufferSourceNodes[0];
+      expect(node.start).toHaveBeenCalledWith(0.5);
+      expect(node.connect).toHaveBeenCalled();
+
+      // After microtask flush, onended fires and applies the delimiter
+      await flush();
+
+      const display = client.state.utterances[0];
+      expect(display.transcription.spokenText).toBe("hello");
+
+      client.disconnect();
+    });
+
+    it("records audioStreamStartTime on ready and uses it for scheduling", async () => {
+      const client = createClient();
+      await connectClient(client);
+
+      // Access the mock AudioContext to set currentTime
+      const ctx = (client as unknown as Record<string, unknown>)[
+        "audioContext"
+      ] as MockAudioContext;
+      ctx.currentTime = 5.0;
+
+      // Send ready — should record audioStreamStartTime = 5.0
+      mockDataChannel.simulateMessage(
+        JSON.stringify({ type: "ready", ready: { id: null } }),
+      );
+
+      // Send transcription
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "transcription",
+          transcription: {
+            complete: [{ word: "hello", start: 0, end: 1 }],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      // Send speech delimiter with time=0.5
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 0.5,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      // Should have started at audioStreamStartTime + time = 5.0 + 0.5 = 5.5
+      expect(createdBufferSourceNodes).toHaveLength(1);
+      expect(createdBufferSourceNodes[0].start).toHaveBeenCalledWith(5.5);
+
+      client.disconnect();
+    });
+
+    it("cancels pending delimiters on ready", async () => {
+      const client = createClient();
+      await connectClient(client);
+
+      // Send transcription
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "transcription",
+          transcription: {
+            complete: [{ word: "hello", start: 0, end: 1 }],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      // Create a delimiter node that won't fire onended automatically
+      const originalStart = MockAudioBufferSourceNode.prototype.start;
+      MockAudioBufferSourceNode.prototype.start = jest.fn();
+
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 10.0,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      expect(createdBufferSourceNodes).toHaveLength(1);
+      const node = createdBufferSourceNodes[0];
+
+      // Send ready — should cancel the pending delimiter
+      mockDataChannel.simulateMessage(
+        JSON.stringify({ type: "ready", ready: { id: null } }),
+      );
+
+      // The node's onended should have been cleared
+      expect(node.onended).toBeNull();
+
+      // Restore original
+      MockAudioBufferSourceNode.prototype.start = originalStart;
+
+      client.disconnect();
+    });
+
+    it("cancels pending delimiters on disconnect", async () => {
+      const client = createClient();
+      await connectClient(client);
+
+      // Prevent auto-fire of onended
+      const originalStart = MockAudioBufferSourceNode.prototype.start;
+      MockAudioBufferSourceNode.prototype.start = jest.fn();
+
+      mockDataChannel.simulateMessage(
+        JSON.stringify({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 10.0,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      const node = createdBufferSourceNodes[0];
+      expect(node).toBeDefined();
+
+      client.disconnect();
+
+      // The node should have been cleaned up
+      expect(node.onended).toBeNull();
+      expect(node.disconnect).toHaveBeenCalled();
+
+      // Restore
+      MockAudioBufferSourceNode.prototype.start = originalStart;
     });
   });
 });

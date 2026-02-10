@@ -209,7 +209,12 @@ export class TranslationState {
       }
       case "speech_delimiter": {
         const { transcription, translation, time } = message.speech_delimiter;
-        console.log("[LT] Speech delimiter received, time:", time);
+        console.log(
+          "[LT] Speech delimiter received:",
+          transcription,
+          translation,
+          time,
+        );
 
         const oldTransBoundary = this.transcriptionsSpeechBoundary;
         const oldTranslBoundary = this.translationsSpeechBoundary;
