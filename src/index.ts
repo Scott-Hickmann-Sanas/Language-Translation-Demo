@@ -4,6 +4,7 @@ export type {
   ConnectOptions,
   ConnectResult,
   FetchLanguagesOptions,
+  IdentifiedLanguageDisplay,
   Language,
   ResetOptions,
   SanasTranslationClientOptions,
