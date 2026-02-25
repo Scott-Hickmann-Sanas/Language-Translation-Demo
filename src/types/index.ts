@@ -15,6 +15,8 @@ export interface SanasTranslationClientOptions {
   endpoint: string;
 }
 
+export type SampleRate = 8000 | 16000 | 24000;
+
 export interface ConnectOptions {
   /** Conversation ID to join. */
   conversationId?: string | null;
@@ -24,6 +26,10 @@ export interface ConnectOptions {
   audioTrack?: MediaStreamTrack;
   /** Microphone constraints (only used when audioTrack is not provided). */
   audioConstraints?: MediaTrackConstraints;
+  /** Input audio sample rate in Hz. Defaults to 24000. */
+  inputSampleRate?: SampleRate;
+  /** Output audio sample rate in Hz. Defaults to 24000. */
+  outputSampleRate?: SampleRate;
 }
 
 export interface ConnectResult {

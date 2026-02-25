@@ -394,6 +394,56 @@ describe("SanasTranslationClient", () => {
       client.disconnect();
     });
 
+    it("sends custom sample rates in session payload", async () => {
+      const client = createClient();
+      setupSuccessfulConnect();
+
+      const connectPromise = client.connect({
+        inputSampleRate: 16000,
+        outputSampleRate: 24000,
+      });
+      await flush();
+      getPeer(client).simulateTrack();
+      mockDataChannel.simulateOpen();
+      await connectPromise;
+
+      const fetchBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(fetchBody.input_sample_rate).toBe(16000);
+      expect(fetchBody.output_sample_rate).toBe(24000);
+
+      client.disconnect();
+    });
+
+    it("defaults sample rates to 16000 when not specified", async () => {
+      const client = createClient();
+      await connectClient(client);
+
+      const fetchBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(fetchBody.input_sample_rate).toBe(16000);
+      expect(fetchBody.output_sample_rate).toBe(16000);
+
+      client.disconnect();
+    });
+
+    it("uses inputSampleRate in default mic constraints", async () => {
+      const client = createClient();
+      setupSuccessfulConnect();
+
+      const connectPromise = client.connect({ inputSampleRate: 16000 });
+      await flush();
+      getPeer(client).simulateTrack();
+      mockDataChannel.simulateOpen();
+      await connectPromise;
+
+      expect(mockGetUserMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          audio: expect.objectContaining({ sampleRate: 16000 }),
+        }),
+      );
+
+      client.disconnect();
+    });
+
     it("resolves with audio stream after ready message", async () => {
       const client = createClient();
       const result = await connectClient(client);

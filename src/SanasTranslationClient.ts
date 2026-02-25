@@ -36,6 +36,9 @@ function webrtcToConnectionState(
 
 let resetIdCounter = 0;
 
+const DEFAULT_INPUT_SAMPLE_RATE = 16000;
+const DEFAULT_OUTPUT_SAMPLE_RATE = 16000;
+
 export class SanasTranslationClient {
   private options: SanasTranslationClientOptions;
   private translationState: TranslationState;
@@ -145,7 +148,7 @@ export class SanasTranslationClient {
           audio: options?.audioConstraints ?? {
             echoCancellation: true,
             noiseSuppression: false,
-            sampleRate: 24000,
+            sampleRate: options?.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
             autoGainControl: true,
           },
         });
@@ -451,6 +454,9 @@ export class SanasTranslationClient {
       ...offer,
       conversation_id: options?.conversationId ?? null,
       name: options?.userName ?? null,
+      input_sample_rate: options?.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
+      output_sample_rate:
+        options?.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE,
     };
 
     const response = await fetch(`${this.options.endpoint}/session`, {

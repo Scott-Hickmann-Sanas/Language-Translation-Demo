@@ -79,12 +79,14 @@ Returns an array of `Language` objects:
 
 Establishes a WebRTC connection to the translation server. Requests microphone access unless a custom audio track is provided. Returns the translated audio stream.
 
-| Option             | Type                    | Description                          |
-| ------------------ | ----------------------- | ------------------------------------ |
-| `conversationId`   | `string`                | Conversation ID to join              |
-| `userName`         | `string`                | Display name for this participant    |
-| `audioTrack`       | `MediaStreamTrack`      | Custom audio track (skips mic access)|
-| `audioConstraints` | `MediaTrackConstraints` | Microphone constraints               |
+| Option             | Type                    | Description                                    |
+| ------------------ | ----------------------- | ---------------------------------------------- |
+| `conversationId`   | `string`                | Conversation ID to join                        |
+| `userName`         | `string`                | Display name for this participant              |
+| `audioTrack`       | `MediaStreamTrack`      | Custom audio track (skips mic access)          |
+| `audioConstraints` | `MediaTrackConstraints` | Microphone constraints                         |
+| `inputSampleRate`  | `number`                | Input audio sample rate in Hz (default: 16000) |
+| `outputSampleRate` | `number`                | Output audio sample rate in Hz (default: 16000)|
 
 Returns `{ audio: MediaStream }` — the translated audio stream to play back.
 
