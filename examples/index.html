@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -11,8 +11,8 @@
         box-sizing: border-box;
       }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          sans-serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         max-width: 800px;
         margin: 0 auto;
         padding: 24px;
@@ -187,7 +187,7 @@
         overflow-y: auto;
       }
       #languagesList:empty::after {
-        content: "Click \"Fetch Languages\" to load available languages...";
+        content: 'Click "Fetch Languages" to load available languages...';
         color: #94a3b8;
         font-style: italic;
       }
@@ -228,11 +228,21 @@
       <div class="row">
         <div>
           <label for="langIn">Source Language</label>
-          <input type="text" id="langIn" value="en-US" placeholder="e.g. en-US" />
+          <input
+            type="text"
+            id="langIn"
+            value="en-US"
+            placeholder="e.g. en-US"
+          />
         </div>
         <div>
           <label for="langOut">Target Language</label>
-          <input type="text" id="langOut" value="es-ES" placeholder="e.g. es-ES" />
+          <input
+            type="text"
+            id="langOut"
+            value="es-ES"
+            placeholder="e.g. es-ES"
+          />
         </div>
       </div>
       <div class="row">
@@ -243,6 +253,24 @@
         <div>
           <label for="userName">User Name (optional)</label>
           <input type="text" id="userName" placeholder="e.g. Test User" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="inputSampleRate">Input Sample Rate</label>
+          <select id="inputSampleRate">
+            <option value="8000">8000 Hz</option>
+            <option value="16000" selected>16000 Hz</option>
+            <option value="24000">24000 Hz</option>
+          </select>
+        </div>
+        <div>
+          <label for="outputSampleRate">Output Sample Rate</label>
+          <select id="outputSampleRate">
+            <option value="8000">8000 Hz</option>
+            <option value="16000" selected>16000 Hz</option>
+            <option value="24000">24000 Hz</option>
+          </select>
         </div>
       </div>
       <div class="checkbox-row">
@@ -274,9 +302,20 @@
     <div class="section">
       <h2>Status</h2>
       <div class="info-row">
-        <span><span class="info-label">Connection:</span> <span id="statusBadge" class="status-badge status-disconnected">disconnected</span></span>
-        <span><span class="info-label">Session:</span> <span id="sessionId">—</span></span>
-        <span><span class="info-label">Languages:</span> <span id="detectedLangs">—</span></span>
+        <span
+          ><span class="info-label">Connection:</span>
+          <span id="statusBadge" class="status-badge status-disconnected"
+            >disconnected</span
+          ></span
+        >
+        <span
+          ><span class="info-label">Session:</span>
+          <span id="sessionId">—</span></span
+        >
+        <span
+          ><span class="info-label">Languages:</span>
+          <span id="detectedLangs">—</span></span
+        >
       </div>
     </div>
 
@@ -295,7 +334,8 @@
     <script type="module">
       import { SanasTranslationClient } from "../dist/index.js";
 
-      const ENDPOINT = "https://api.sanaslt.com";
+      const ENDPOINT =
+        "https://catechumenal-nonsocially-marivel.ngrok-free.dev";
 
       // DOM elements
       const apiKeyInput = document.getElementById("apiKey");
@@ -309,6 +349,8 @@
       const disconnectBtn = document.getElementById("disconnectBtn");
       const resetBtn = document.getElementById("resetBtn");
       const muteBtn = document.getElementById("muteBtn");
+      const inputSampleRateInput = document.getElementById("inputSampleRate");
+      const outputSampleRateInput = document.getElementById("outputSampleRate");
       const canLangSwapCheckbox = document.getElementById("canLangSwap");
       const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
@@ -422,29 +464,31 @@
             log(`Connection state: ${state}`, "info");
             updateStatus(state);
             updateButtons(state);
-          })
+          }),
         );
 
         unsubscribers.push(
           client.onUtterance((utterance, index) => {
             renderUtterance(utterance, index);
-          })
+          }),
         );
 
         unsubscribers.push(
           client.onLanguages((languages) => {
             const display = languages
-              .map((l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`)
+              .map(
+                (l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`,
+              )
               .join(", ");
             detectedLangsSpan.textContent = display;
             log(`Detected languages: ${display}`, "info");
-          })
+          }),
         );
 
         unsubscribers.push(
           client.onError((error) => {
             log(`Error: ${error}`, "error");
-          })
+          }),
         );
 
         connectBtn.disabled = true;
@@ -456,6 +500,10 @@
           const uName = userNameInput.value.trim();
           if (convId) connectOptions.conversationId = convId;
           if (uName) connectOptions.userName = uName;
+          const inputSR = parseInt(inputSampleRateInput.value, 10);
+          const outputSR = parseInt(outputSampleRateInput.value, 10);
+          if (inputSR > 0) connectOptions.inputSampleRate = inputSR;
+          if (outputSR > 0) connectOptions.outputSampleRate = outputSR;
 
           const { audio } = await client.connect(connectOptions);
           audioPlayer.srcObject = audio;
@@ -468,8 +516,16 @@
           if (langIn && langOut) {
             const canLangSwap = canLangSwapCheckbox.checked;
             const detectLanguages = detectLangsCheckbox.checked;
-            log(`Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
-            await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
+            log(
+              `Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+              "info",
+            );
+            await client.reset({
+              langIn,
+              langOut,
+              canLangSwap,
+              detectLanguages,
+            });
             log("Reset complete. Translation active.", "success");
           }
         } catch (err) {
@@ -499,7 +555,10 @@
         try {
           const canLangSwap = canLangSwapCheckbox.checked;
           const detectLanguages = detectLangsCheckbox.checked;
-          log(`Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
+          log(
+            `Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+            "info",
+          );
           await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
           log("Reset complete.", "success");
         } catch (err) {
@@ -512,7 +571,10 @@
         if (!client) return;
         client.isAudioEnabled = !client.isAudioEnabled;
         muteBtn.textContent = client.isAudioEnabled ? "Mute" : "Unmute";
-        log(`Microphone ${client.isAudioEnabled ? "unmuted" : "muted"}.`, "info");
+        log(
+          `Microphone ${client.isAudioEnabled ? "unmuted" : "muted"}.`,
+          "info",
+        );
       });
 
       function updateButtons(state) {
