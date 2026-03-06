@@ -273,6 +273,26 @@
           </select>
         </div>
       </div>
+      <label>Transport</label>
+      <div class="checkbox-row">
+        <input
+          type="radio"
+          name="transport"
+          id="transportWebRTC"
+          value="webrtc"
+          checked
+          style="width: auto; margin: 0"
+        />
+        <label for="transportWebRTC">WebRTC</label>
+        <input
+          type="radio"
+          name="transport"
+          id="transportWebSocket"
+          value="websocket"
+          style="width: auto; margin: 0; margin-left: 12px"
+        />
+        <label for="transportWebSocket">WebSocket</label>
+      </div>
       <div class="checkbox-row">
         <input type="checkbox" id="canLangSwap" />
         <label for="canLangSwap">Can lang swap</label>
@@ -316,6 +336,10 @@
           ><span class="info-label">Languages:</span>
           <span id="detectedLangs">—</span></span
         >
+        <span
+          ><span class="info-label">Speech Languages:</span>
+          <span id="speechLangs">—</span></span
+        >
       </div>
     </div>
 
@@ -334,8 +358,7 @@
     <script type="module">
       import { SanasTranslationClient } from "../dist/index.js";
 
-      const ENDPOINT =
-        "https://catechumenal-nonsocially-marivel.ngrok-free.dev";
+      const ENDPOINT = "https://api.sanaslt.com";
 
       // DOM elements
       const apiKeyInput = document.getElementById("apiKey");
@@ -351,11 +374,14 @@
       const muteBtn = document.getElementById("muteBtn");
       const inputSampleRateInput = document.getElementById("inputSampleRate");
       const outputSampleRateInput = document.getElementById("outputSampleRate");
+      const transportWebSocketRadio =
+        document.getElementById("transportWebSocket");
       const canLangSwapCheckbox = document.getElementById("canLangSwap");
       const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
       const sessionIdSpan = document.getElementById("sessionId");
       const detectedLangsSpan = document.getElementById("detectedLangs");
+      const speechLangsSpan = document.getElementById("speechLangs");
       const utterancesDiv = document.getElementById("utterances");
       const logDiv = document.getElementById("log");
       const audioPlayer = document.getElementById("audioPlayer");
@@ -456,7 +482,13 @@
           endpoint: ENDPOINT,
         });
 
-        log(`Created client (endpoint: ${ENDPOINT})`, "info");
+        const transportName = transportWebSocketRadio.checked
+          ? "WebSocket"
+          : "WebRTC";
+        log(
+          `Created client (endpoint: ${ENDPOINT}, transport: ${transportName})`,
+          "info",
+        );
 
         // Subscribe to events
         unsubscribers.push(
@@ -491,11 +523,26 @@
           }),
         );
 
+        unsubscribers.push(
+          client.onSpeechLanguages((langIn, langOut) => {
+            speechLangsSpan.textContent = `${langIn} → ${langOut}`;
+            log(`Speech languages: ${langIn} → ${langOut}`, "info");
+          }),
+        );
+
+        unsubscribers.push(
+          client.onSpeechStop(() => {
+            log("Speech stop detected.", "info");
+          }),
+        );
+
         connectBtn.disabled = true;
         log("Connecting...");
 
         try {
+          const useWebSocket = transportWebSocketRadio.checked;
           const connectOptions = {};
+          if (useWebSocket) connectOptions.websocket = true;
           const convId = conversationIdInput.value.trim();
           const uName = userNameInput.value.trim();
           if (convId) connectOptions.conversationId = convId;
@@ -593,6 +640,7 @@
         updateButtons("disconnected");
         sessionIdSpan.textContent = "—";
         detectedLangsSpan.textContent = "—";
+        speechLangsSpan.textContent = "—";
         muteBtn.textContent = "Mute";
         audioPlayer.srcObject = null;
       }

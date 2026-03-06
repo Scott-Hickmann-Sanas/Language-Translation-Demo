@@ -15,6 +15,8 @@ function makeCallbacks(
     onUtteranceChanged: jest.fn(),
     onLanguagesChanged: jest.fn(),
     onReady: jest.fn(),
+    onSpeechStop: jest.fn(),
+    onSpeechLanguages: jest.fn(),
     ...overrides,
   };
 }
@@ -407,6 +409,77 @@ describe("TranslationState", () => {
       expect(display.transcription.unspokenText).toBe("");
       expect(display.translation.spokenText).toBe("");
       expect(display.translation.unspokenText).toBe("");
+    });
+  });
+
+  describe("handleMessage — speech_languages", () => {
+    it("calls onSpeechLanguages callback with lang_in and lang_out", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage({
+        type: "speech_languages",
+        speech_languages: {
+          lang_in: "en-US",
+          lang_out: "es-ES",
+        },
+      });
+
+      expect(callbacks.onSpeechLanguages).toHaveBeenCalledWith(
+        "en-US",
+        "es-ES",
+      );
+      expect(callbacks.onSpeechLanguages).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onSpeechLanguages each time a message arrives", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage({
+        type: "speech_languages",
+        speech_languages: { lang_in: "en-US", lang_out: "es-ES" },
+      });
+      state.handleMessage({
+        type: "speech_languages",
+        speech_languages: { lang_in: "fr-FR", lang_out: "de-DE" },
+      });
+
+      expect(callbacks.onSpeechLanguages).toHaveBeenCalledTimes(2);
+      expect(callbacks.onSpeechLanguages).toHaveBeenLastCalledWith(
+        "fr-FR",
+        "de-DE",
+      );
+    });
+  });
+
+  describe("handleMessage — speech_stop", () => {
+    it("calls onSpeechStop callback", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage({
+        type: "speech_stop",
+        speech_stop: {},
+      });
+
+      expect(callbacks.onSpeechStop).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onSpeechStop each time a message arrives", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage({
+        type: "speech_stop",
+        speech_stop: {},
+      });
+      state.handleMessage({
+        type: "speech_stop",
+        speech_stop: {},
+      });
+
+      expect(callbacks.onSpeechStop).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -131,6 +131,8 @@ export interface TranslationStateCallbacks {
   onUtteranceChanged: (utterance: UtteranceDisplay, index: number) => void;
   onLanguagesChanged: (languages: IdentifiedLanguageDisplay[]) => void;
   onReady: (id: string | null) => void;
+  onSpeechLanguages: (langIn: string, langOut: string) => void;
+  onSpeechStop: () => void;
 }
 
 export class TranslationState {
@@ -245,6 +247,21 @@ export class TranslationState {
           probability: l.probability,
         }));
         this.callbacks.onLanguagesChanged(this._identifiedLanguages);
+        break;
+      }
+      case "speech_languages": {
+        this.callbacks.onSpeechLanguages(
+          message.speech_languages.lang_in,
+          message.speech_languages.lang_out,
+        );
+        break;
+      }
+      case "speech_stop": {
+        this.callbacks.onSpeechStop();
+        break;
+      }
+      default: {
+        console.warn("[LT] Unknown message type:", message.type);
         break;
       }
     }

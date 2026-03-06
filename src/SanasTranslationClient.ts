@@ -10,46 +10,24 @@ import {
   ResetOptions,
   SanasTranslationClientOptions,
   TranslationClientState,
+  Transport,
   UtteranceDisplay,
 } from "./types";
+import { WebRTCTransport } from "./WebRTCTransport";
+import { WebSocketTransport } from "./WebSocketTransport";
 
 type UtteranceCallback = (utterance: UtteranceDisplay, index: number) => void;
 type LanguagesCallback = (languages: IdentifiedLanguageDisplay[]) => void;
 type ConnectionStateCallback = (state: ConnectionState) => void;
 type ErrorCallback = (error: string) => void;
-
-function webrtcToConnectionState(
-  state: RTCPeerConnectionState,
-): ConnectionState {
-  switch (state) {
-    case "new":
-    case "connecting":
-      return "connecting";
-    case "connected":
-      return "connected";
-    case "disconnected":
-    case "closed":
-    case "failed":
-      return "disconnected";
-  }
-}
-
-let resetIdCounter = 0;
-
-const DEFAULT_INPUT_SAMPLE_RATE = 16000;
-const DEFAULT_OUTPUT_SAMPLE_RATE = 16000;
+type SpeechLanguagesCallback = (langIn: string, langOut: string) => void;
+type SpeechStopCallback = () => void;
 
 export class SanasTranslationClient {
   private options: SanasTranslationClientOptions;
   private translationState: TranslationState;
 
-  private peerConnection: RTCPeerConnection | null = null;
-  private dataChannel: RTCDataChannel | null = null;
-  private localStream: MediaStream | null = null;
-  private audioTrack: MediaStreamTrack | null = null;
-  private ownsAudioTrack = false;
-  private messageQueue: string[] = [];
-  private _sessionId: string | null = null;
+  private transport: Transport | null = null;
   private _connectionState: ConnectionState = "disconnected";
   private _error: string | null = null;
   private _isAudioEnabled = true;
@@ -62,6 +40,8 @@ export class SanasTranslationClient {
   private languagesCallbacks = new Set<LanguagesCallback>();
   private connectionStateCallbacks = new Set<ConnectionStateCallback>();
   private errorCallbacks = new Set<ErrorCallback>();
+  private speechLanguagesCallbacks = new Set<SpeechLanguagesCallback>();
+  private speechStopCallbacks = new Set<SpeechStopCallback>();
 
   // Pending reset promises keyed by reset ID
   private pendingResets = new Map<
@@ -94,6 +74,16 @@ export class SanasTranslationClient {
           this.pendingResets.delete(id);
         }
       },
+      onSpeechLanguages: (langIn, langOut) => {
+        for (const cb of this.speechLanguagesCallbacks) {
+          cb(langIn, langOut);
+        }
+      },
+      onSpeechStop: () => {
+        for (const cb of this.speechStopCallbacks) {
+          cb();
+        }
+      },
     });
   }
 
@@ -104,7 +94,7 @@ export class SanasTranslationClient {
   }
 
   get sessionId(): string | null {
-    return this._sessionId;
+    return this.transport?.sessionId ?? null;
   }
 
   get error(): string | null {
@@ -121,157 +111,66 @@ export class SanasTranslationClient {
 
   set isAudioEnabled(enabled: boolean) {
     this._isAudioEnabled = enabled;
-    if (this.audioTrack) {
-      this.audioTrack.enabled = enabled;
-    }
+    this.transport?.setAudioEnabled(enabled);
   }
 
   // --- Lifecycle ---
 
   async connect(options?: ConnectOptions): Promise<ConnectResult> {
-    if (this.peerConnection) {
+    if (this.transport) {
       throw new Error("Already connected. Call disconnect() first.");
     }
 
     this._error = null;
     this.setConnectionState("connecting");
 
-    // Acquire audio track
-    if (options?.audioTrack) {
-      this.audioTrack = options.audioTrack;
-      this.localStream = new MediaStream([options.audioTrack]);
-      this.ownsAudioTrack = false;
-    } else {
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          video: false,
-          audio: options?.audioConstraints ?? {
-            echoCancellation: true,
-            noiseSuppression: false,
-            sampleRate: options?.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
-            autoGainControl: true,
-          },
-        });
-        this.audioTrack = this.localStream.getAudioTracks()[0] ?? null;
-        this.ownsAudioTrack = true;
-      } catch {
-        this.setConnectionState("disconnected");
-        throw new Error(
-          "Could not access microphone. Please check permissions.",
-        );
-      }
-    }
-
-    if (this.audioTrack) {
-      this.audioTrack.enabled = this._isAudioEnabled;
-    }
+    const transport = options?.websocket
+      ? new WebSocketTransport()
+      : new WebRTCTransport();
+    this.transport = transport;
 
     // Create AudioContext during user gesture so it starts in "running" state
-    // (Chrome suspends contexts created outside a gesture).
-    // The AudioContext is used as a synchronized clock for scheduling speech
-    // delimiters — audio playback still goes through the raw WebRTC stream.
     const ctx = new AudioContext();
     this.audioContext = ctx;
     await ctx.resume();
 
-    // Create RTCPeerConnection
-    const peer = new RTCPeerConnection();
-    this.peerConnection = peer;
+    try {
+      const result = await transport.connect(options ?? {}, this.options, {
+        onMessage: (message: LTMessage) => {
+          if (message.type === "speech_delimiter") {
+            this.scheduleSpeechDelimiter(message);
+          } else {
+            this.translationState.handleMessage(message);
+          }
+        },
+        onError: (error: string) => {
+          this.setError(error);
+        },
+        onConnectionStateChange: (state: ConnectionState) => {
+          this.setConnectionState(state);
+        },
+      });
 
-    // Create data channel
-    const dc = peer.createDataChannel("messaging");
-    this.dataChannel = dc;
-
-    dc.onopen = () => {
-      for (const msg of this.messageQueue) {
-        dc.send(msg);
+      // For WebRTC, wire AudioContext clock to remote stream for delimiter sync
+      if (!options?.websocket) {
+        const source = ctx.createMediaStreamSource(result.audio);
+        const silentGain = ctx.createGain();
+        silentGain.gain.value = 0;
+        source.connect(silentGain);
+        silentGain.connect(ctx.destination);
       }
-      this.messageQueue = [];
-    };
 
-    dc.onclose = () => {
-      // Data channel closed
-    };
+      transport.setAudioEnabled(this._isAudioEnabled);
 
-    dc.onerror = (event) => {
-      console.error("Data channel error:", event);
-    };
-
-    dc.onmessage = (event: MessageEvent) => {
-      try {
-        const message = LTMessage.parse(JSON.parse(event.data));
-        if (message.type === "speech_delimiter") {
-          this.scheduleSpeechDelimiter(message);
-        } else {
-          this.translationState.handleMessage(message);
-        }
-      } catch (e) {
-        console.error("Failed to parse message from data channel:", e);
+      return result;
+    } catch (err) {
+      if (this.transport === transport) {
+        this.transport = null;
       }
-    };
-
-    // Add local audio tracks
-    if (this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        if (track.kind === "audio") {
-          peer.addTrack(track, this.localStream);
-        }
-      }
+      this.cleanupAudioTracking();
+      this.setConnectionState("disconnected");
+      throw err;
     }
-
-    // Wait for translated audio track and WebRTC connection
-    return new Promise<ConnectResult>((resolve, reject) => {
-      let translatedAudio: MediaStream | null = null;
-      let connectFailed = false;
-
-      const tryResolve = () => {
-        if (translatedAudio && !connectFailed) {
-          // Feed remote audio into the AudioContext through a silent gain so
-          // its clock stays in sync with the stream, but actual playback goes
-          // through the raw WebRTC stream set on an <audio> element by the caller.
-          const source = ctx.createMediaStreamSource(translatedAudio);
-          const silentGain = ctx.createGain();
-          silentGain.gain.value = 0;
-          source.connect(silentGain);
-          silentGain.connect(ctx.destination);
-          resolve({ audio: translatedAudio });
-        }
-      };
-
-      // Listen for translated audio track from server
-      peer.ontrack = (e) => {
-        translatedAudio = e.streams[0];
-        tryResolve();
-      };
-
-      // Connection state tracking
-      peer.onconnectionstatechange = () => {
-        this.setConnectionState(webrtcToConnectionState(peer.connectionState));
-
-        if (peer.connectionState === "failed") {
-          this.setError("Disconnected from server.");
-          if (!connectFailed) {
-            connectFailed = true;
-            reject(new Error(this._error!));
-          }
-        }
-
-        if (peer.connectionState === "closed") {
-          peer.close();
-          this.peerConnection = null;
-        }
-      };
-
-      // Negotiate with server
-      peer.onnegotiationneeded = () => {
-        this.connectToServer(peer, options).catch((err) => {
-          if (!connectFailed) {
-            connectFailed = true;
-            reject(err);
-          }
-        });
-      };
-    });
   }
 
   disconnect(): void {
@@ -281,25 +180,11 @@ export class SanasTranslationClient {
     }
     this.pendingResets.clear();
 
-    this._sessionId = null;
-
-    if (this.peerConnection) {
-      this.peerConnection.close();
-      this.peerConnection = null;
+    if (this.transport) {
+      this.transport.disconnect();
+      this.transport = null;
     }
 
-    // Only stop tracks if we captured them
-    if (this.ownsAudioTrack && this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        track.stop();
-      }
-    }
-
-    this.localStream = null;
-    this.audioTrack = null;
-    this.ownsAudioTrack = false;
-    this.dataChannel = null;
-    this.messageQueue = [];
     this.setConnectionState("disconnected");
     this._error = null;
 
@@ -348,26 +233,24 @@ export class SanasTranslationClient {
   // --- Messaging ---
 
   async reset(options: ResetOptions): Promise<void> {
-    const id = `reset-${++resetIdCounter}`;
+    if (!this.transport) {
+      throw new Error("Not connected. Call connect() first.");
+    }
 
-    const message = {
-      type: "reset" as const,
-      reset: {
-        id,
-        lang_in: options.langIn,
-        lang_out: options.langOut,
-        voice_id: options.voiceId,
-        glossary: options.glossary,
-        clear_history: options.clearHistory,
-        can_lang_swap: options.canLangSwap,
-        detect_languages: options.detectLanguages,
-      },
-    };
+    const resetId = this.transport.configure(options);
 
-    this.sendMessage(message);
+    if (resetId !== null) {
+      // WebRTC: server will respond with ready containing this ID
+      return new Promise<void>((resolve, reject) => {
+        this.pendingResets.set(resetId, { resolve, reject });
+      });
+    }
 
-    return new Promise<void>((resolve, reject) => {
-      this.pendingResets.set(id, { resolve, reject });
+    // WebSocket: server responds with ready (id: null) — use onReadyOnce
+    return new Promise<void>((resolve) => {
+      this.translationState.onReadyOnce(() => {
+        resolve();
+      });
     });
   }
 
@@ -384,6 +267,20 @@ export class SanasTranslationClient {
     this.languagesCallbacks.add(callback);
     return () => {
       this.languagesCallbacks.delete(callback);
+    };
+  }
+
+  onSpeechLanguages(callback: SpeechLanguagesCallback): () => void {
+    this.speechLanguagesCallbacks.add(callback);
+    return () => {
+      this.speechLanguagesCallbacks.delete(callback);
+    };
+  }
+
+  onSpeechStop(callback: SpeechStopCallback): () => void {
+    this.speechStopCallbacks.add(callback);
+    return () => {
+      this.speechStopCallbacks.delete(callback);
     };
   }
 
@@ -419,80 +316,8 @@ export class SanasTranslationClient {
     }
   }
 
-  private sendMessage(message: LTMessage): void {
-    const serialized = JSON.stringify(message);
-    if (this.dataChannel && this.dataChannel.readyState === "open") {
-      this.dataChannel.send(serialized);
-    } else {
-      this.messageQueue.push(serialized);
-    }
-  }
-
-  private async connectToServer(
-    peer: RTCPeerConnection,
-    options?: ConnectOptions,
-  ): Promise<void> {
-    const offer = await peer.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: false,
-    });
-    await peer.setLocalDescription(offer);
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-
-    if (this.options.accessToken) {
-      headers["Authorization"] = `Bearer ${this.options.accessToken}`;
-    } else if (this.options.apiKey) {
-      headers["X-API-Key"] = this.options.apiKey;
-    } else {
-      throw new Error("Missing credentials: provide apiKey or accessToken.");
-    }
-
-    const payload = {
-      ...offer,
-      conversation_id: options?.conversationId ?? null,
-      name: options?.userName ?? null,
-      input_sample_rate: options?.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
-      output_sample_rate:
-        options?.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE,
-    };
-
-    const response = await fetch(`${this.options.endpoint}/session`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-      headers,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("LT session request failed:", response.status, errorText);
-
-      if (response.status === 401) {
-        this.setError("Authentication failed. Please sign in again.");
-      } else if (response.status === 403) {
-        this.setError(
-          "Access denied. You don't have permission to use translation services.",
-        );
-      } else {
-        this.setError(
-          "Unable to connect to translation server. Please try again later.",
-        );
-      }
-
-      throw new Error(this._error!);
-    }
-
-    const answer = await response.json();
-    this._sessionId =
-      typeof answer.session_id === "string" ? answer.session_id : null;
-    await peer.setRemoteDescription(answer);
-  }
-
   private scheduleSpeechDelimiter(message: LTMessage): void {
     if (!this.audioContext) {
-      // No audio context — apply immediately
       this.translationState.handleMessage(message);
       return;
     }
@@ -503,14 +328,12 @@ export class SanasTranslationClient {
     const scheduledTime =
       this.audioStreamStartTime + message.speech_delimiter.time;
 
-    // Create a 1-sample silent buffer source to schedule the callback
     const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
 
     source.onended = () => {
-      // Remove from tracking array
       const idx = this.scheduledDelimiterNodes.indexOf(source);
       if (idx !== -1) {
         this.scheduledDelimiterNodes.splice(idx, 1);

@@ -73,6 +73,29 @@ export type WrappedSpeechDelimiterMessage = z.infer<
   typeof WrappedSpeechDelimiterMessage
 >;
 
+export const SpeechLanguagesMessage = z.object({
+  lang_in: z.string(),
+  lang_out: z.string(),
+});
+export type SpeechLanguagesMessage = z.infer<typeof SpeechLanguagesMessage>;
+
+export const WrappedSpeechLanguagesMessage = z.object({
+  type: z.literal("speech_languages"),
+  speech_languages: SpeechLanguagesMessage,
+});
+export type WrappedSpeechLanguagesMessage = z.infer<
+  typeof WrappedSpeechLanguagesMessage
+>;
+
+export const SpeechStopMessage = z.object({});
+export type SpeechStopMessage = z.infer<typeof SpeechStopMessage>;
+
+export const WrappedSpeechStopMessage = z.object({
+  type: z.literal("speech_stop"),
+  speech_stop: SpeechStopMessage,
+});
+export type WrappedSpeechStopMessage = z.infer<typeof SpeechStopMessage>;
+
 export const IdentifiedLanguage = z.object({
   short_code: z.string(),
   name: z.string(),
@@ -109,6 +132,8 @@ export const LTMessage = z.discriminatedUnion("type", [
   WrappedTranscriptionMessage,
   WrappedTranslationMessage,
   WrappedSpeechDelimiterMessage,
+  WrappedSpeechLanguagesMessage,
+  WrappedSpeechStopMessage,
   WrappedLanguagesMessage,
   WrappedReadyMessage,
 ]);

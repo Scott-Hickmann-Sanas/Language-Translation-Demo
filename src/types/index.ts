@@ -3,6 +3,7 @@ import { Word } from "./words";
 export * from "./delimiters";
 export * from "./ltMessages";
 export * from "./words";
+export * from "./wsMessages";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";
 
@@ -18,6 +19,8 @@ export interface SanasTranslationClientOptions {
 export type SampleRate = 8000 | 16000 | 24000;
 
 export interface ConnectOptions {
+  /** Use WebSocket transport instead of WebRTC. */
+  websocket?: boolean;
   /** Conversation ID to join. */
   conversationId?: string | null;
   /** Display name for this participant. */
@@ -25,10 +28,11 @@ export interface ConnectOptions {
   /** Provide your own audio track instead of capturing the microphone. */
   audioTrack?: MediaStreamTrack;
   /** Microphone constraints (only used when audioTrack is not provided). */
+  // eslint-disable-next-line no-undef
   audioConstraints?: MediaTrackConstraints;
-  /** Input audio sample rate in Hz. Defaults to 24000. */
+  /** Input audio sample rate in Hz. Defaults to 16000. */
   inputSampleRate?: SampleRate;
-  /** Output audio sample rate in Hz. Defaults to 24000. */
+  /** Output audio sample rate in Hz. Defaults to 16000. */
   outputSampleRate?: SampleRate;
 }
 
@@ -52,6 +56,29 @@ export interface ResetOptions {
   canLangSwap?: boolean;
   /** Whether to enable language detection. */
   detectLanguages?: boolean;
+}
+
+// --- Transport abstraction ---
+
+import { LTMessage } from "./ltMessages";
+
+export interface TransportCallbacks {
+  onMessage: (message: LTMessage) => void;
+  onError: (error: string) => void;
+  onConnectionStateChange: (state: ConnectionState) => void;
+}
+
+export interface Transport {
+  connect(
+    options: ConnectOptions,
+    clientOptions: SanasTranslationClientOptions,
+    callbacks: TransportCallbacks,
+  ): Promise<ConnectResult>;
+  /** Send language/config settings. Returns a reset ID (WebRTC) or null (WebSocket). */
+  configure(options: ResetOptions): string | null;
+  disconnect(): void;
+  setAudioEnabled(enabled: boolean): void;
+  readonly sessionId: string | null;
 }
 
 export interface UtteranceStreamDisplay {
