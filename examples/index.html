@@ -163,6 +163,9 @@
         background: #f8fafc;
         border-radius: 0 6px 6px 0;
       }
+      .utterance.remote {
+        border-left-color: #16a34a;
+      }
       .utterance .label {
         font-size: 0.75rem;
         font-weight: 600;
@@ -176,8 +179,13 @@
       .utterance .unspoken {
         color: #94a3b8;
       }
-      #utterances:empty::after {
+      #localUtterances:empty::after {
         content: "Utterances will appear here once translation starts...";
+        color: #94a3b8;
+        font-style: italic;
+      }
+      #remoteUtterances:empty::after {
+        content: "Remote utterances will appear here when relayed...";
         color: #94a3b8;
         font-style: italic;
       }
@@ -344,8 +352,13 @@
     </div>
 
     <div class="section">
-      <h2>Utterances</h2>
-      <div id="utterances"></div>
+      <h2>Local Utterances</h2>
+      <div id="localUtterances"></div>
+    </div>
+
+    <div class="section">
+      <h2>Remote Utterances</h2>
+      <div id="remoteUtterances"></div>
     </div>
 
     <div class="section">
@@ -356,7 +369,13 @@
     <audio id="audioPlayer" autoplay></audio>
 
     <script type="module">
-      import { SanasTranslationClient } from "../dist/index.js";
+      import {
+        SanasTranslationClient,
+        TranslationState,
+        getMicrophoneTrack,
+        WebSocketTransport,
+        WebRTCTransport,
+      } from "../dist/index.js";
 
       const ENDPOINT = "https://api.sanaslt.com";
 
@@ -382,12 +401,19 @@
       const sessionIdSpan = document.getElementById("sessionId");
       const detectedLangsSpan = document.getElementById("detectedLangs");
       const speechLangsSpan = document.getElementById("speechLangs");
-      const utterancesDiv = document.getElementById("utterances");
+      const localUtterancesDiv = document.getElementById("localUtterances");
+      const remoteUtterancesDiv = document.getElementById("remoteUtterances");
       const logDiv = document.getElementById("log");
       const audioPlayer = document.getElementById("audioPlayer");
 
       let client = null;
-      let unsubscribers = [];
+      let transport = null;
+      let audioTrack = null;
+      let isMuted = false;
+
+      // Two TranslationState instances: one for local, one for remote
+      let myState = null;
+      let theirState = null;
 
       // Logging
       function log(message, type = "") {
@@ -405,20 +431,22 @@
         statusBadge.className = `status-badge status-${state}`;
       }
 
-      // Render an utterance
-      function renderUtterance(utterance, index) {
-        let el = document.getElementById(`utterance-${index}`);
+      // Render an utterance into a container
+      function renderUtterance(container, utterance, index) {
+        const prefix = container === localUtterancesDiv ? "local" : "remote";
+        let el = document.getElementById(`${prefix}-utterance-${index}`);
         if (!el) {
           el = document.createElement("div");
-          el.className = "utterance";
-          el.id = `utterance-${index}`;
+          el.className =
+            "utterance" + (prefix === "remote" ? " remote" : "");
+          el.id = `${prefix}-utterance-${index}`;
           el.innerHTML = `
             <div><span class="label">Transcription</span></div>
             <div class="transcription"></div>
             <div style="margin-top:4px"><span class="label">Translation</span></div>
             <div class="translation"></div>
           `;
-          utterancesDiv.appendChild(el);
+          container.appendChild(el);
         }
 
         const tDiv = el.querySelector(".transcription");
@@ -434,7 +462,7 @@
         return d.innerHTML;
       }
 
-      // Fetch Languages
+      // Fetch Languages (static method)
       fetchLangsBtn.addEventListener("click", async () => {
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
@@ -442,16 +470,14 @@
           return;
         }
 
-        const tempClient = new SanasTranslationClient({
-          apiKey,
-          endpoint: ENDPOINT,
-        });
-
         fetchLangsBtn.disabled = true;
         log("Fetching available languages...", "info");
 
         try {
-          const languages = await tempClient.fetchLanguages();
+          const languages = await SanasTranslationClient.fetchLanguages({
+            apiKey,
+            endpoint: ENDPOINT,
+          });
           languagesListDiv.innerHTML = "";
           for (const lang of languages) {
             const item = document.createElement("div");
@@ -469,7 +495,8 @@
 
       // Connect
       connectBtn.addEventListener("click", async () => {
-        utterancesDiv.innerHTML = "";
+        localUtterancesDiv.innerHTML = "";
+        remoteUtterancesDiv.innerHTML = "";
 
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
@@ -477,63 +504,66 @@
           return;
         }
 
-        client = new SanasTranslationClient({
-          apiKey,
-          endpoint: ENDPOINT,
-        });
-
         const transportName = transportWebSocketRadio.checked
           ? "WebSocket"
           : "WebRTC";
-        log(
-          `Created client (endpoint: ${ENDPOINT}, transport: ${transportName})`,
-          "info",
-        );
 
-        // Subscribe to events
-        unsubscribers.push(
-          client.onConnectionStateChange((state) => {
+        // Create two TranslationState instances
+        myState = new TranslationState({
+          onConnectionStateChange: (state) => {
             log(`Connection state: ${state}`, "info");
             updateStatus(state);
             updateButtons(state);
-          }),
-        );
-
-        unsubscribers.push(
-          client.onUtterance((utterance, index) => {
-            renderUtterance(utterance, index);
-          }),
-        );
-
-        unsubscribers.push(
-          client.onLanguages((languages) => {
+          },
+          onUtterance: (utterance, index) => {
+            renderUtterance(localUtterancesDiv, utterance, index);
+          },
+          onLanguages: (languages) => {
             const display = languages
               .map(
-                (l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`,
+                (l) =>
+                  `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`,
               )
               .join(", ");
             detectedLangsSpan.textContent = display;
             log(`Detected languages: ${display}`, "info");
-          }),
-        );
-
-        unsubscribers.push(
-          client.onError((error) => {
+          },
+          onError: (error) => {
             log(`Error: ${error}`, "error");
-          }),
-        );
-
-        unsubscribers.push(
-          client.onSpeechLanguages((langIn, langOut) => {
+          },
+          onSpeechLanguages: (langIn, langOut) => {
             speechLangsSpan.textContent = `${langIn} → ${langOut}`;
             log(`Speech languages: ${langIn} → ${langOut}`, "info");
-          }),
-        );
-
-        unsubscribers.push(
-          client.onSpeechStop(() => {
+          },
+          onSpeechStop: () => {
             log("Speech stop detected.", "info");
-          }),
+          },
+          onReady: (id) => {
+            log(`Ready (id: ${id})`, "info");
+          },
+        });
+
+        theirState = new TranslationState({
+          onUtterance: (utterance, index) => {
+            renderUtterance(remoteUtterancesDiv, utterance, index);
+          },
+          onConnectionStateChange: (state) => {
+            log(`[Remote] Connection state: ${state}`, "info");
+          },
+        });
+
+        client = new SanasTranslationClient(myState, {
+          apiKey,
+          endpoint: ENDPOINT,
+          onMessage: (msg) => {
+            // Relay to remote participant: relay.send(JSON.stringify(msg));
+            log(`[stream] ${msg.type}${msg.type === "lt" ? ":" + msg.lt.type : ""}`);
+          },
+        });
+
+        log(
+          `Created client (endpoint: ${ENDPOINT}, transport: ${transportName})`,
+          "info",
         );
 
         connectBtn.disabled = true;
@@ -541,13 +571,20 @@
 
         try {
           const useWebSocket = transportWebSocketRadio.checked;
-          const connectOptions = {};
-          if (useWebSocket) connectOptions.websocket = true;
+          transport = useWebSocket
+            ? new WebSocketTransport()
+            : new WebRTCTransport();
+
+          const inputSR = parseInt(inputSampleRateInput.value, 10);
+          audioTrack = await getMicrophoneTrack({
+            sampleRate: inputSR > 0 ? inputSR : 16000,
+          });
+
+          const connectOptions = { transport, audioTrack };
           const convId = conversationIdInput.value.trim();
           const uName = userNameInput.value.trim();
           if (convId) connectOptions.conversationId = convId;
           if (uName) connectOptions.userName = uName;
-          const inputSR = parseInt(inputSampleRateInput.value, 10);
           const outputSR = parseInt(outputSampleRateInput.value, 10);
           if (inputSR > 0) connectOptions.inputSampleRate = inputSR;
           if (outputSR > 0) connectOptions.outputSampleRate = outputSR;
@@ -555,7 +592,10 @@
           const { audio } = await client.connect(connectOptions);
           audioPlayer.srcObject = audio;
           log("Connected and receiving audio.", "success");
-          sessionIdSpan.textContent = client.sessionId ?? "—";
+          sessionIdSpan.textContent = transport.sessionId ?? "—";
+
+          // Incoming relay messages from remote participant would go here:
+          // relay.onMessage((data) => theirState.handleMessage(JSON.parse(data)));
 
           // Auto-reset with configured languages
           const langIn = langInInput.value.trim();
@@ -615,13 +655,11 @@
 
       // Mute toggle
       muteBtn.addEventListener("click", () => {
-        if (!client) return;
-        client.isAudioEnabled = !client.isAudioEnabled;
-        muteBtn.textContent = client.isAudioEnabled ? "Mute" : "Unmute";
-        log(
-          `Microphone ${client.isAudioEnabled ? "unmuted" : "muted"}.`,
-          "info",
-        );
+        if (!transport) return;
+        isMuted = !isMuted;
+        transport.setAudioEnabled(!isMuted);
+        muteBtn.textContent = isMuted ? "Unmute" : "Mute";
+        log(`Microphone ${isMuted ? "muted" : "unmuted"}.`, "info");
       });
 
       function updateButtons(state) {
@@ -633,9 +671,15 @@
       }
 
       function cleanup() {
-        for (const unsub of unsubscribers) unsub();
-        unsubscribers = [];
+        if (audioTrack) {
+          audioTrack.stop();
+          audioTrack = null;
+        }
         client = null;
+        transport = null;
+        myState = null;
+        theirState = null;
+        isMuted = false;
         updateStatus("disconnected");
         updateButtons("disconnected");
         sessionIdSpan.textContent = "—";

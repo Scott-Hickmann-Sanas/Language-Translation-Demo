@@ -65,7 +65,6 @@ export class WebSocketTransport implements Transport {
   private workletNode: AudioWorkletNode | null = null;
   private localStream: MediaStream | null = null;
   private audioTrack: MediaStreamTrack | null = null;
-  private ownsAudioTrack = false;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private destinationNode: MediaStreamAudioDestinationNode | null = null;
   private _sessionId: string | null = null;
@@ -90,30 +89,8 @@ export class WebSocketTransport implements Transport {
     this.outputSampleRate =
       options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE;
 
-    // Acquire audio track
-    if (options.audioTrack) {
-      this.audioTrack = options.audioTrack;
-      this.localStream = new MediaStream([options.audioTrack]);
-      this.ownsAudioTrack = false;
-    } else {
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          video: false,
-          audio: options.audioConstraints ?? {
-            echoCancellation: true,
-            noiseSuppression: false,
-            sampleRate: this.inputSampleRate,
-            autoGainControl: true,
-          },
-        });
-        this.audioTrack = this.localStream.getAudioTracks()[0] ?? null;
-        this.ownsAudioTrack = true;
-      } catch {
-        throw new Error(
-          "Could not access microphone. Please check permissions.",
-        );
-      }
-    }
+    this.audioTrack = options.audioTrack;
+    this.localStream = new MediaStream([options.audioTrack]);
 
     // Set up AudioContext
     const ctx = new AudioContext({ sampleRate: this.inputSampleRate });
@@ -229,15 +206,8 @@ export class WebSocketTransport implements Transport {
       this.sourceNode = null;
     }
 
-    if (this.ownsAudioTrack && this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        track.stop();
-      }
-    }
-
     this.localStream = null;
     this.audioTrack = null;
-    this.ownsAudioTrack = false;
     this.destinationNode = null;
 
     if (this.audioContext) {

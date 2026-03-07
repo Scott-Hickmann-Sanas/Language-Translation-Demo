@@ -1,11 +1,26 @@
+import { LTMessage } from "./ltMessages";
+import { ConnectionState, StreamMessage } from "./streamMessages";
 import { Word } from "./words";
 
 export * from "./delimiters";
 export * from "./ltMessages";
+export * from "./streamMessages";
 export * from "./words";
 export * from "./wsMessages";
 
-export type ConnectionState = "disconnected" | "connecting" | "connected";
+// --- TranslationState callbacks (state-related, all optional) ---
+
+export interface TranslationStateCallbacks {
+  onUtterance?: (utterance: UtteranceDisplay, index: number) => void;
+  onLanguages?: (languages: IdentifiedLanguageDisplay[]) => void;
+  onReady?: (id: string | null) => void;
+  onSpeechLanguages?: (langIn: string, langOut: string) => void;
+  onSpeechStop?: () => void;
+  onConnectionStateChange?: (state: ConnectionState) => void;
+  onError?: (error: string) => void;
+}
+
+// --- Client options ---
 
 export interface SanasTranslationClientOptions {
   /** API key authentication. Use this OR accessToken, not both. */
@@ -14,22 +29,21 @@ export interface SanasTranslationClientOptions {
   accessToken?: string;
   /** LT server endpoint URL. */
   endpoint: string;
+  /** Fires with every StreamMessage for relay to other participants. */
+  onMessage?: (message: StreamMessage) => void;
 }
 
 export type SampleRate = 8000 | 16000 | 24000;
 
 export interface ConnectOptions {
-  /** Use WebSocket transport instead of WebRTC. */
-  websocket?: boolean;
+  /** Transport implementation to use (WebRTC or WebSocket). */
+  transport: Transport;
+  /** Audio track to send to the server (from mic, file, etc.). */
+  audioTrack: MediaStreamTrack;
   /** Conversation ID to join. */
   conversationId?: string | null;
   /** Display name for this participant. */
   userName?: string | null;
-  /** Provide your own audio track instead of capturing the microphone. */
-  audioTrack?: MediaStreamTrack;
-  /** Microphone constraints (only used when audioTrack is not provided). */
-  // eslint-disable-next-line no-undef
-  audioConstraints?: MediaTrackConstraints;
   /** Input audio sample rate in Hz. Defaults to 16000. */
   inputSampleRate?: SampleRate;
   /** Output audio sample rate in Hz. Defaults to 16000. */
@@ -60,8 +74,6 @@ export interface ResetOptions {
 
 // --- Transport abstraction ---
 
-import { LTMessage } from "./ltMessages";
-
 export interface TransportCallbacks {
   onMessage: (message: LTMessage) => void;
   onError: (error: string) => void;
@@ -80,6 +92,8 @@ export interface Transport {
   setAudioEnabled(enabled: boolean): void;
   readonly sessionId: string | null;
 }
+
+// --- Display types ---
 
 export interface UtteranceStreamDisplay {
   /** Text that the audio has already played through. */

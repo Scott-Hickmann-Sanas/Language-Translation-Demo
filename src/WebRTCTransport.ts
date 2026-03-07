@@ -36,7 +36,6 @@ export class WebRTCTransport implements Transport {
   private dataChannel: RTCDataChannel | null = null;
   private localStream: MediaStream | null = null;
   private audioTrack: MediaStreamTrack | null = null;
-  private ownsAudioTrack = false;
   private messageQueue: string[] = [];
   private _sessionId: string | null = null;
   private callbacks: TransportCallbacks | null = null;
@@ -54,30 +53,8 @@ export class WebRTCTransport implements Transport {
     this.callbacks = callbacks;
     this.connectOptions = options;
 
-    // Acquire audio track
-    if (options.audioTrack) {
-      this.audioTrack = options.audioTrack;
-      this.localStream = new MediaStream([options.audioTrack]);
-      this.ownsAudioTrack = false;
-    } else {
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          video: false,
-          audio: options.audioConstraints ?? {
-            echoCancellation: true,
-            noiseSuppression: false,
-            sampleRate: options.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
-            autoGainControl: true,
-          },
-        });
-        this.audioTrack = this.localStream.getAudioTracks()[0] ?? null;
-        this.ownsAudioTrack = true;
-      } catch {
-        throw new Error(
-          "Could not access microphone. Please check permissions.",
-        );
-      }
-    }
+    this.audioTrack = options.audioTrack;
+    this.localStream = new MediaStream([options.audioTrack]);
 
     // Create RTCPeerConnection
     const peer = new RTCPeerConnection();
@@ -193,15 +170,8 @@ export class WebRTCTransport implements Transport {
       this.peerConnection = null;
     }
 
-    if (this.ownsAudioTrack && this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        track.stop();
-      }
-    }
-
     this.localStream = null;
     this.audioTrack = null;
-    this.ownsAudioTrack = false;
     this.dataChannel = null;
     this.messageQueue = [];
     this.callbacks = null;

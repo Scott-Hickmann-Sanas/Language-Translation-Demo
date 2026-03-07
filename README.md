@@ -1,6 +1,6 @@
 # Sanas Language Translation JS Client
 
-A browser-based TypeScript client for real-time audio language translation using WebRTC.
+A browser-based TypeScript client for real-time audio language translation, supporting both WebRTC and WebSocket transports.
 
 ## Installation
 
@@ -11,90 +11,151 @@ npm install @sanas-ai/language-translation
 ## Quick Start
 
 ```typescript
-import { SanasTranslationClient } from "@sanas-ai/language-translation";
+import {
+  SanasTranslationClient,
+  TranslationState,
+  WebRTCTransport,
+  getMicrophoneTrack,
+} from "@sanas-ai/language-translation";
 
-const client = new SanasTranslationClient({
+// 1. Create a TranslationState to receive callbacks
+const state = new TranslationState({
+  onUtterance: (utterance, index) => {
+    console.log("Transcription:", utterance.transcription.spokenText);
+    console.log("Translation:", utterance.translation.spokenText);
+  },
+  onConnectionStateChange: (connectionState) => {
+    console.log("Connection:", connectionState);
+  },
+  onError: (error) => {
+    console.error("Error:", error);
+  },
+});
+
+// 2. Create the client
+const client = new SanasTranslationClient(state, {
   apiKey: "your-api-key",
   endpoint: "https://api.sanaslt.com",
 });
 
-// Listen for events
-client.onUtterance((utterance, index) => {
-  console.log("Transcription:", utterance.transcription.spokenText);
-  console.log("Translation:", utterance.translation.spokenText);
-});
+// 3. Acquire a mic track and connect
+const track = await getMicrophoneTrack();
+const transport = new WebRTCTransport();
+const { audio } = await client.connect({ transport, audioTrack: track });
 
-client.onError((error) => {
-  console.error("Error:", error);
-});
-
-// Connect (requests microphone access)
-const { audio } = await client.connect();
-
-// Play translated audio
+// 4. Play translated audio
 const audioElement = document.createElement("audio");
 audioElement.srcObject = audio;
 audioElement.autoplay = true;
 
-// Configure translation
-await client.reset({
-  langIn: "en-US",
-  langOut: "es-ES",
+// 5. Configure translation
+await client.reset({ langIn: "en-US", langOut: "es-ES" });
+
+// 6. When done
+client.disconnect();
+track.stop();
+```
+
+## Architecture
+
+The library is split into three main pieces:
+
+- **`TranslationState`** — Standalone state container that processes `StreamMessage`s and fires callbacks. Consumers create one instance per participant (local + remote) to display both sides of a call.
+- **`SanasTranslationClient`** — Manages the connection lifecycle, wraps transport events into `StreamMessage`s, and routes them to a `TranslationState`. Exposes an `onMessage` hook for relaying messages to other participants.
+- **Transports** (`WebRTCTransport`, `WebSocketTransport`) — Handle the network protocol. The consumer provides an audio track; the transport sends it to the server and delivers translated audio back.
+
+### Two-Party Call Pattern
+
+```typescript
+// Device A
+const myState = new TranslationState({
+  onUtterance: (utt, idx) => renderLocal(utt, idx),
+});
+const theirState = new TranslationState({
+  onUtterance: (utt, idx) => renderRemote(utt, idx),
 });
 
-// When done
-client.disconnect();
+const client = new SanasTranslationClient(myState, {
+  apiKey: "...",
+  endpoint: "...",
+  onMessage: (msg) => relay.send(JSON.stringify(msg)), // send to Device B
+});
+
+relay.onMessage((data) => theirState.handleMessage(JSON.parse(data))); // receive from Device B
 ```
 
 ## API
 
-### `new SanasTranslationClient(options)`
+### `TranslationState`
 
-Creates a new client instance.
+```typescript
+const state = new TranslationState(callbacks?);
+```
 
-| Option        | Type     | Description                                        |
-| ------------- | -------- | -------------------------------------------------- |
-| `apiKey`      | `string` | API key for authentication (use this or `accessToken`) |
-| `accessToken` | `string` | OAuth token for authentication (use this or `apiKey`)  |
-| `endpoint`    | `string` | Server URL (e.g. `https://api.sanaslt.com`)            |
+Manages transcription, translation, connection state, and language detection state. All callbacks are optional.
 
-### `client.fetchLanguages(options?): Promise<Language[]>`
+#### Callbacks
 
-Fetches the list of available languages from the server. Can be called without connecting.
+| Callback                 | Signature                                                | Description                                 |
+| ------------------------ | -------------------------------------------------------- | ------------------------------------------- |
+| `onUtterance`            | `(utterance: UtteranceDisplay, index: number) => void`   | Utterance created or updated                |
+| `onLanguages`            | `(languages: IdentifiedLanguageDisplay[]) => void`       | Detected languages updated                  |
+| `onReady`                | `(id: string \| null) => void`                           | Server confirmed ready after reset          |
+| `onSpeechLanguages`      | `(langIn: string, langOut: string) => void`              | Active speech language pair changed          |
+| `onSpeechStop`           | `() => void`                                             | Speech stopped                              |
+| `onConnectionStateChange`| `(state: ConnectionState) => void`                       | Connection state changed                    |
+| `onError`                | `(error: string) => void`                                | Error occurred                              |
 
-| Option | Type     | Description                                                     |
-| ------ | -------- | --------------------------------------------------------------- |
-| `lang` | `string` | Language code for localized names (e.g. `"es-ES"`). Defaults to `"en-US"`. |
+#### Methods
 
-Returns an array of `Language` objects:
+| Method                        | Returns                  | Description                                    |
+| ----------------------------- | ------------------------ | ---------------------------------------------- |
+| `handleMessage(msg)`          | `void`                   | Process a `StreamMessage` (from client or relay)|
+| `waitForReady(resetId)`       | `Promise<void>`          | Resolves when a matching ready message arrives  |
+| `destroy()`                   | `void`                   | Rejects all pending ready promises              |
+| `getState()`                  | `TranslationClientState` | Full snapshot of utterances and languages        |
+| `getUtteranceDisplay(index)`  | `UtteranceDisplay`       | Display data for a single utterance             |
 
-| Field       | Type     | Description                              |
-| ----------- | -------- | ---------------------------------------- |
-| `longCode`  | `string` | Full code with region (e.g. `"en-US"`)   |
-| `shortCode` | `string` | Short code (e.g. `"en"`)                 |
-| `name`      | `string` | Localized display name                   |
-| `support`   | `string` | Support tier: `"alpha"`, `"beta"`, or `"stable"` |
+#### Properties
 
-### `client.connect(options?): Promise<ConnectResult>`
+| Property              | Type                         | Description                  |
+| --------------------- | ---------------------------- | ---------------------------- |
+| `connectionState`     | `ConnectionState`            | Current connection state     |
+| `identifiedLanguages` | `IdentifiedLanguageDisplay[]`| Last detected languages      |
 
-Establishes a WebRTC connection to the translation server. Requests microphone access unless a custom audio track is provided. Returns the translated audio stream.
+### `SanasTranslationClient`
 
-| Option             | Type                    | Description                                    |
-| ------------------ | ----------------------- | ---------------------------------------------- |
-| `conversationId`   | `string`                | Conversation ID to join                        |
-| `userName`         | `string`                | Display name for this participant              |
-| `audioTrack`       | `MediaStreamTrack`      | Custom audio track (skips mic access)          |
-| `audioConstraints` | `MediaTrackConstraints` | Microphone constraints                         |
-| `inputSampleRate`  | `number`                | Input audio sample rate in Hz (default: 16000) |
-| `outputSampleRate` | `number`                | Output audio sample rate in Hz (default: 16000)|
+```typescript
+const client = new SanasTranslationClient(translationState, options);
+```
 
-Returns `{ audio: MediaStream }` — the translated audio stream to play back.
+| Option        | Type                              | Description                                           |
+| ------------- | --------------------------------- | ----------------------------------------------------- |
+| `apiKey`      | `string?`                         | API key (use this or `accessToken`)                   |
+| `accessToken` | `string?`                         | OAuth token (use this or `apiKey`)                    |
+| `endpoint`    | `string`                          | Server URL (e.g. `https://api.sanaslt.com`)           |
+| `onMessage`   | `(message: StreamMessage) => void`| Fires for every message — use this for relay          |
 
-### `client.disconnect()`
+#### `client.connect(options): Promise<ConnectResult>`
 
-Closes the connection and releases all resources (peer connection, microphone, data channel).
+Connects to the translation server through the given transport.
 
-### `client.reset(options): Promise<void>`
+| Option            | Type                | Required | Description                                    |
+| ----------------- | ------------------- | -------- | ---------------------------------------------- |
+| `transport`       | `Transport`         | Yes      | `WebRTCTransport` or `WebSocketTransport`      |
+| `audioTrack`      | `MediaStreamTrack`  | Yes      | Audio track to send (from mic, file, etc.)     |
+| `conversationId`  | `string?`           |          | Conversation ID to join                        |
+| `userName`        | `string?`           |          | Display name for this participant              |
+| `inputSampleRate` | `SampleRate?`       |          | Input sample rate in Hz (default: 16000)       |
+| `outputSampleRate`| `SampleRate?`       |          | Output sample rate in Hz (default: 16000)      |
+
+Returns `{ audio: MediaStream }` — the translated audio stream.
+
+#### `client.disconnect()`
+
+Closes the connection, destroys the translation state's pending promises, and cleans up audio resources. The consumer is responsible for stopping the audio track.
+
+#### `client.reset(options): Promise<void>`
 
 Configures the translation session. Resolves when the server confirms it is ready.
 
@@ -102,50 +163,61 @@ Configures the translation session. Resolves when the server confirms it is read
 | ----------------- | ---------- | ---------------------------------------- |
 | `langIn`          | `string`   | Source language code (e.g. `"en-US"`)    |
 | `langOut`         | `string`   | Target language code (e.g. `"es-ES"`)    |
-| `voiceId`         | `string`   | Voice ID for translated audio            |
-| `glossary`        | `string[]` | Terms to preserve during translation     |
-| `clearHistory`    | `boolean`  | Clear conversation history               |
-| `canLangSwap`     | `boolean`  | Allow automatic language swapping        |
-| `detectLanguages` | `boolean`  | Enable language detection                |
+| `voiceId`         | `string?`  | Voice ID for translated audio            |
+| `glossary`        | `string[]?`| Terms to preserve during translation     |
+| `clearHistory`    | `boolean?` | Clear conversation history               |
+| `canLangSwap`     | `boolean?` | Allow automatic language swapping        |
+| `detectLanguages` | `boolean?` | Enable language detection                |
 
-### Properties
+#### `SanasTranslationClient.fetchLanguages(credentials, options?): Promise<Language[]>`
 
-| Property          | Type                     | Description                            |
-| ----------------- | ------------------------ | -------------------------------------- |
-| `connectionState` | `ConnectionState`        | `"disconnected"`, `"connecting"`, or `"connected"` |
-| `sessionId`       | `string \| null`         | Server session ID                      |
-| `error`           | `string \| null`         | Current error message                  |
-| `state`           | `TranslationClientState` | Full transcription/translation state   |
-| `isAudioEnabled`  | `boolean`                | Get/set microphone mute state          |
-
-### Event Callbacks
-
-All callbacks return an unsubscribe function.
+Static method. Fetches available languages without needing a connection.
 
 ```typescript
-// Fired when an utterance is created or updated
-const unsub = client.onUtterance((utterance, index) => {
-  // utterance.transcription.spokenText — transcribed text already spoken
-  // utterance.transcription.unspokenText — transcribed text not yet spoken
-  // utterance.translation.spokenText — translated text already spoken
-  // utterance.translation.unspokenText — translated text not yet spoken
+const languages = await SanasTranslationClient.fetchLanguages({
+  apiKey: "your-api-key",
+  endpoint: "https://api.sanaslt.com",
 });
-unsub(); // stop listening
+```
 
-// Fired when languages are detected
-client.onLanguages((languages) => {
-  // languages: Array<{ shortCode: string, name: string, probability: number }>
-});
+### `StreamMessage`
 
-// Fired when connection state changes
-client.onConnectionStateChange((state) => {
-  // state: "disconnected" | "connecting" | "connected"
-});
+A Zod-validated discriminated union representing all messages in the client stream. Three sub-types:
 
-// Fired on errors
-client.onError((error) => {
-  // error: string
-});
+| Type        | Shape                                    | Description                    |
+| ----------- | ---------------------------------------- | ------------------------------ |
+| `lt`        | `{ type: "lt", lt: LTMessage }`          | Server LT message (transcription, translation, ready, etc.) |
+| `transport` | `{ type: "transport", state: ConnectionState }` | Connection state change |
+| `error`     | `{ type: "error", message: string }`     | Error message                  |
+
+### `getMicrophoneTrack(options?): Promise<MediaStreamTrack>`
+
+Helper to acquire a microphone audio track. The caller owns the returned track and must call `track.stop()` when done.
+
+```typescript
+const track = await getMicrophoneTrack({ sampleRate: 16000 });
+```
+
+| Option        | Type                    | Description                              |
+| ------------- | ----------------------- | ---------------------------------------- |
+| `sampleRate`  | `number?`               | Desired sample rate (default: 16000)     |
+| `constraints` | `MediaTrackConstraints?`| Custom constraints (overrides defaults)  |
+
+### Transports
+
+Both transports implement the `Transport` interface. Choose one when connecting:
+
+```typescript
+import { WebRTCTransport, WebSocketTransport } from "@sanas-ai/language-translation";
+
+const transport = new WebRTCTransport();   // or new WebSocketTransport()
+await client.connect({ transport, audioTrack: track });
+
+// Mute/unmute
+transport.setAudioEnabled(false);
+
+// Session ID (available after connect)
+console.log(transport.sessionId);
 ```
 
 ## Test Client
@@ -155,10 +227,11 @@ A browser-based test client is included in `examples/index.html` for interactive
 To run it:
 
 ```bash
+npm run build
 npx serve .
 ```
 
-Then open [http://localhost:3000/examples/](http://localhost:3000/examples/) in your browser. Enter your API key, click **Fetch Languages** to see available languages, configure source/target languages, and click **Connect** to start a live translation session.
+Then open [http://localhost:3000/examples/](http://localhost:3000/examples/) in your browser. Enter your API key, configure source/target languages, and click **Connect** to start a live translation session. The example demonstrates the two-state pattern with separate local and remote utterance displays.
 
 ## Development
 

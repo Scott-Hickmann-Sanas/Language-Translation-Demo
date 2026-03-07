@@ -1,7 +1,10 @@
 import {
+  ConnectionState,
   IdentifiedLanguageDisplay,
   LTMessage,
+  StreamMessage,
   TranslationClientState,
+  TranslationStateCallbacks,
   Utterance,
   UtteranceDisplay,
   UtteranceStreamDisplay,
@@ -127,17 +130,10 @@ function buildUtteranceStreamDisplay(
   };
 }
 
-export interface TranslationStateCallbacks {
-  onUtteranceChanged: (utterance: UtteranceDisplay, index: number) => void;
-  onLanguagesChanged: (languages: IdentifiedLanguageDisplay[]) => void;
-  onReady: (id: string | null) => void;
-  onSpeechLanguages: (langIn: string, langOut: string) => void;
-  onSpeechStop: () => void;
-}
-
 export class TranslationState {
   private transcriptions: Utterance[] = [];
   private translations: Utterance[] = [];
+  private _connectionState: ConnectionState = "disconnected";
   private transcriptionsSpeechBoundary: CharacterPosition = {
     ...ZERO_POSITION,
   };
@@ -146,22 +142,89 @@ export class TranslationState {
   };
   private _identifiedLanguages: IdentifiedLanguageDisplay[] = [];
   private callbacks: TranslationStateCallbacks;
-  private readyOnceCallbacks: Array<(id: string | null) => void> = [];
+  private _readyPromises: Map<
+    string | null,
+    { resolve: () => void; reject: (error: Error) => void }[]
+  > = new Map();
 
-  constructor(callbacks: TranslationStateCallbacks) {
+  constructor(callbacks: TranslationStateCallbacks = {}) {
     this.callbacks = callbacks;
   }
 
-  /** Register a one-time listener for the next ready message. */
-  onReadyOnce(callback: (id: string | null) => void): void {
-    this.readyOnceCallbacks.push(callback);
+  get connectionState(): ConnectionState {
+    return this._connectionState;
   }
 
   get identifiedLanguages(): IdentifiedLanguageDisplay[] {
     return this._identifiedLanguages;
   }
 
-  handleMessage(message: LTMessage): void {
+  handleMessage(message: StreamMessage): void {
+    switch (message.type) {
+      case "lt":
+        this.handleLTMessage(message.lt);
+        break;
+      case "transport":
+        if (this._connectionState !== message.state) {
+          this._connectionState = message.state;
+          this.callbacks.onConnectionStateChange?.(message.state);
+        }
+        break;
+      case "error":
+        this.callbacks.onError?.(message.message);
+        break;
+    }
+  }
+
+  waitForReady(resetId: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const readyPromises = this._readyPromises.get(resetId) ?? [];
+      readyPromises.push({ resolve, reject });
+      this._readyPromises.set(resetId, readyPromises);
+    });
+  }
+
+  destroy(): void {
+    this._readyPromises.forEach((readyPromises) => {
+      for (const { reject } of readyPromises) {
+        reject(new Error("Disconnected"));
+      }
+    });
+  }
+
+  getUtteranceDisplay(index: number): UtteranceDisplay {
+    const transcription = this.transcriptions[index];
+    const transcriptionUtteranceIdx = transcription?.idx ?? index;
+    const translation = this.findTranslationForUtterance(
+      transcriptionUtteranceIdx,
+    );
+
+    return {
+      transcription: buildUtteranceStreamDisplay(
+        transcription,
+        transcriptionUtteranceIdx,
+        this.transcriptionsSpeechBoundary,
+      ),
+      translation: buildUtteranceStreamDisplay(
+        translation?.utterance,
+        translation?.utterance?.idx ?? transcriptionUtteranceIdx,
+        this.translationsSpeechBoundary,
+      ),
+    };
+  }
+
+  getState(): TranslationClientState {
+    const utterances: UtteranceDisplay[] = [];
+    for (let i = 0; i < this.transcriptions.length; i++) {
+      utterances.push(this.getUtteranceDisplay(i));
+    }
+    return {
+      utterances,
+      identifiedLanguages: this._identifiedLanguages,
+    };
+  }
+
+  private handleLTMessage(message: LTMessage): void {
     switch (message.type) {
       case "transcription": {
         const {
@@ -200,13 +263,8 @@ export class TranslationState {
         break;
       }
       case "ready": {
-        this.callbacks.onReady(message.ready.id);
-        // Fire and clear one-time ready listeners
-        const readyOnce = this.readyOnceCallbacks;
-        this.readyOnceCallbacks = [];
-        for (const cb of readyOnce) {
-          cb(message.ready.id);
-        }
+        this.resolveReady(message.ready.id);
+        this.callbacks.onReady?.(message.ready.id);
         break;
       }
       case "speech_delimiter": {
@@ -246,18 +304,18 @@ export class TranslationState {
           name: l.name,
           probability: l.probability,
         }));
-        this.callbacks.onLanguagesChanged(this._identifiedLanguages);
+        this.callbacks.onLanguages?.(this._identifiedLanguages);
         break;
       }
       case "speech_languages": {
-        this.callbacks.onSpeechLanguages(
+        this.callbacks.onSpeechLanguages?.(
           message.speech_languages.lang_in,
           message.speech_languages.lang_out,
         );
         break;
       }
       case "speech_stop": {
-        this.callbacks.onSpeechStop();
+        this.callbacks.onSpeechStop?.();
         break;
       }
       default: {
@@ -267,40 +325,12 @@ export class TranslationState {
     }
   }
 
-  destroy(): void {
-    this.readyOnceCallbacks = [];
-  }
-
-  getUtteranceDisplay(index: number): UtteranceDisplay {
-    const transcription = this.transcriptions[index];
-    const transcriptionUtteranceIdx = transcription?.idx ?? index;
-    const translation = this.findTranslationForUtterance(
-      transcriptionUtteranceIdx,
-    );
-
-    return {
-      transcription: buildUtteranceStreamDisplay(
-        transcription,
-        transcriptionUtteranceIdx,
-        this.transcriptionsSpeechBoundary,
-      ),
-      translation: buildUtteranceStreamDisplay(
-        translation?.utterance,
-        translation?.utterance?.idx ?? transcriptionUtteranceIdx,
-        this.translationsSpeechBoundary,
-      ),
-    };
-  }
-
-  getState(): TranslationClientState {
-    const utterances: UtteranceDisplay[] = [];
-    for (let i = 0; i < this.transcriptions.length; i++) {
-      utterances.push(this.getUtteranceDisplay(i));
+  private resolveReady(resetId: string | null) {
+    const readyPromises = this._readyPromises.get(resetId) ?? [];
+    for (const { resolve } of readyPromises) {
+      resolve();
     }
-    return {
-      utterances,
-      identifiedLanguages: this._identifiedLanguages,
-    };
+    this._readyPromises.delete(resetId);
   }
 
   private findTranslationForUtterance(
@@ -324,7 +354,7 @@ export class TranslationState {
       utteranceIdx,
     );
     if (arrayIdx !== -1) {
-      this.callbacks.onUtteranceChanged(
+      this.callbacks.onUtterance?.(
         this.getUtteranceDisplay(arrayIdx),
         arrayIdx,
       );
@@ -337,7 +367,6 @@ export class TranslationState {
     oldTranslBoundary: CharacterPosition,
     newTranslBoundary: CharacterPosition,
   ): void {
-    // Determine the range of server utterance indices that could be affected
     const minUtteranceIdx = Math.min(
       oldTransBoundary.utteranceIdx,
       newTransBoundary.utteranceIdx,
@@ -351,13 +380,10 @@ export class TranslationState {
       newTranslBoundary.utteranceIdx,
     );
 
-    // Iterate over array positions and check if their server utterance index
-    // falls within the affected range (utterance indices may not be contiguous
-    // due to invisible/empty utterances that are never sent).
     for (let i = 0; i < this.transcriptions.length; i++) {
       const serverIdx = this.transcriptions[i].idx;
       if (serverIdx >= minUtteranceIdx && serverIdx <= maxUtteranceIdx) {
-        this.callbacks.onUtteranceChanged(this.getUtteranceDisplay(i), i);
+        this.callbacks.onUtterance?.(this.getUtteranceDisplay(i), i);
       }
     }
   }
