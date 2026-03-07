@@ -31,6 +31,8 @@ export interface SanasTranslationClientOptions {
   endpoint: string;
   /** Fires with every StreamMessage for relay to other participants. */
   onMessage?: (message: StreamMessage) => void;
+  /** Fires with raw output audio data (Int16 PCM) as received from the server. */
+  onAudioData?: (samples: Int16Array, sampleRate: number) => void;
 }
 
 export type SampleRate = 8000 | 16000 | 24000;
@@ -78,6 +80,7 @@ export interface TransportCallbacks {
   onMessage: (message: LTMessage) => void;
   onError: (error: string) => void;
   onConnectionStateChange: (state: ConnectionState) => void;
+  onAudioData?: (samples: Int16Array, sampleRate: number) => void;
 }
 
 export interface Transport {
@@ -89,6 +92,8 @@ export interface Transport {
   /** Send language/config settings. Returns a reset ID (WebRTC) or null (WebSocket). */
   configure(options: ResetOptions): string | null;
   disconnect(): void;
+  /** Wait for any pending audio playback to finish before tearing down. */
+  drainAudio(): Promise<void>;
   setAudioEnabled(enabled: boolean): void;
   readonly sessionId: string | null;
 }

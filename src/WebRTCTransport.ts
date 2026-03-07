@@ -8,6 +8,7 @@ import {
   Transport,
   TransportCallbacks,
 } from "./types";
+import { float32ToInt16 } from "./audio";
 
 function webrtcToConnectionState(
   // eslint-disable-next-line no-undef
@@ -40,6 +41,8 @@ export class WebRTCTransport implements Transport {
   private _sessionId: string | null = null;
   private callbacks: TransportCallbacks | null = null;
   private connectOptions: ConnectOptions | null = null;
+  private captureContext: AudioContext | null = null;
+  private captureProcessor: ScriptProcessorNode | null = null;
 
   get sessionId(): string | null {
     return this._sessionId;
@@ -110,6 +113,23 @@ export class WebRTCTransport implements Transport {
 
       peer.ontrack = (e) => {
         translatedAudio = e.streams[0];
+
+        if (callbacks.onAudioData) {
+          const outputSR =
+            options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE;
+          const capCtx = new AudioContext({ sampleRate: outputSR });
+          this.captureContext = capCtx;
+          const src = capCtx.createMediaStreamSource(translatedAudio);
+          const proc = capCtx.createScriptProcessor(4096, 1, 1);
+          this.captureProcessor = proc;
+          proc.onaudioprocess = (ev) => {
+            const float32 = ev.inputBuffer.getChannelData(0);
+            callbacks.onAudioData!(float32ToInt16(float32), outputSR);
+          };
+          src.connect(proc);
+          proc.connect(capCtx.destination);
+        }
+
         tryResolve();
       };
 
@@ -165,6 +185,15 @@ export class WebRTCTransport implements Transport {
   disconnect(): void {
     this._sessionId = null;
 
+    if (this.captureProcessor) {
+      this.captureProcessor.disconnect();
+      this.captureProcessor = null;
+    }
+    if (this.captureContext) {
+      this.captureContext.close();
+      this.captureContext = null;
+    }
+
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;
@@ -176,6 +205,10 @@ export class WebRTCTransport implements Transport {
     this.messageQueue = [];
     this.callbacks = null;
     this.connectOptions = null;
+  }
+
+  drainAudio(): Promise<void> {
+    return Promise.resolve();
   }
 
   setAudioEnabled(enabled: boolean): void {

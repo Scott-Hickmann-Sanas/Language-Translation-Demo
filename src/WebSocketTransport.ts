@@ -1,3 +1,4 @@
+import { float32ToInt16 } from "./audio";
 import {
   ConnectOptions,
   ConnectResult,
@@ -23,15 +24,6 @@ class PcmProcessor extends AudioWorkletProcessor {
 }
 registerProcessor('pcm-processor', PcmProcessor);
 `;
-
-function float32ToInt16(float32: Float32Array): Int16Array {
-  const int16 = new Int16Array(float32.length);
-  for (let i = 0; i < float32.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, float32[i]));
-    int16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
-  }
-  return int16;
-}
 
 function int16ToFloat32(int16: Int16Array): Float32Array {
   const float32 = new Float32Array(int16.length);
@@ -220,6 +212,18 @@ export class WebSocketTransport implements Transport {
     this.nextPlaybackTime = 0;
   }
 
+  drainAudio(): Promise<void> {
+    const ctx = this.audioContext;
+    if (!ctx || ctx.state === "closed") return Promise.resolve();
+
+    const remaining = this.nextPlaybackTime - ctx.currentTime;
+    if (remaining <= 0) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      setTimeout(resolve, remaining * 1000);
+    });
+  }
+
   setAudioEnabled(enabled: boolean): void {
     this._isAudioEnabled = enabled;
     if (this.audioTrack) {
@@ -321,6 +325,7 @@ export class WebSocketTransport implements Transport {
     const ctx = this.audioContext;
     const arrayBuffer = base64Decode(base64Data);
     const int16 = new Int16Array(arrayBuffer);
+    this.callbacks?.onAudioData?.(int16, this.outputSampleRate);
     const float32 = int16ToFloat32(int16);
 
     const audioBuffer = ctx.createBuffer(

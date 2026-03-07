@@ -54,13 +54,17 @@ export class SanasTranslationClient {
           this.handleIncomingMessage({ type: "error", message: error }),
         onConnectionStateChange: (state) =>
           this.handleIncomingMessage({ type: "transport", state }),
+        onAudioData: this.options.onAudioData,
       });
 
-      const source = ctx.createMediaStreamSource(result.audio);
+      // Keep the AudioContext clock running (for speech_delimiter scheduling)
+      // without consuming the audio stream, so callers can record/play it.
+      const osc = ctx.createOscillator();
       const silentGain = ctx.createGain();
       silentGain.gain.value = 0;
-      source.connect(silentGain);
+      osc.connect(silentGain);
       silentGain.connect(ctx.destination);
+      osc.start();
 
       transport.setAudioEnabled(this._isAudioEnabled);
 
@@ -73,6 +77,31 @@ export class SanasTranslationClient {
       this.handleIncomingMessage({ type: "transport", state: "disconnected" });
       throw err;
     }
+  }
+
+  /**
+   * Wait for all pending audio playback and scheduled speech delimiters to
+   * complete. Call this before disconnect() on server-initiated disconnects
+   * to avoid cutting off in-flight audio.
+   */
+  async drainAudio(): Promise<void> {
+    const transportDrain = this.transport?.drainAudio() ?? Promise.resolve();
+
+    const delimiterDrain =
+      this.scheduledDelimiterNodes.length > 0
+        ? new Promise<void>((resolve) => {
+            const check = () => {
+              if (this.scheduledDelimiterNodes.length === 0) {
+                resolve();
+              } else {
+                setTimeout(check, 50);
+              }
+            };
+            check();
+          })
+        : Promise.resolve();
+
+    await Promise.all([transportDrain, delimiterDrain]);
   }
 
   disconnect(): void {

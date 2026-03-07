@@ -59,6 +59,13 @@ class MockAudioBufferSourceNode {
   stop = jest.fn();
 }
 
+class MockOscillatorNode {
+  connect = jest.fn();
+  disconnect = jest.fn();
+  start = jest.fn();
+  stop = jest.fn();
+}
+
 class MockAudioDestinationNode {}
 
 let createdBufferSourceNodes: MockAudioBufferSourceNode[] = [];
@@ -76,6 +83,7 @@ class MockAudioContext {
     return node;
   });
   createGain = jest.fn(() => new MockGainNode());
+  createOscillator = jest.fn(() => new MockOscillatorNode());
   resume = jest.fn(() => Promise.resolve());
   close = jest.fn(() => Promise.resolve());
 }
@@ -114,6 +122,7 @@ class MockTransport implements Transport {
   });
 
   disconnect = jest.fn();
+  drainAudio = jest.fn(() => Promise.resolve());
   setAudioEnabled = jest.fn();
 }
 
