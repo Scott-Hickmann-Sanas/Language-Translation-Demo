@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -11,8 +11,8 @@
         box-sizing: border-box;
       }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          sans-serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         max-width: 800px;
         margin: 0 auto;
         padding: 24px;
@@ -94,6 +94,41 @@
         background: #737373;
         color: #fff;
       }
+      .recording-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #dc2626;
+        margin-left: 6px;
+        animation: pulse 1.2s infinite;
+        vertical-align: middle;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .file-input-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .file-input-row input[type="file"] {
+        width: auto;
+        margin: 0;
+        flex: 1;
+      }
+      .file-name {
+        font-size: 0.8rem;
+        color: #64748b;
+        margin-bottom: 8px;
+      }
       .checkbox-row {
         display: flex;
         align-items: center;
@@ -163,6 +198,9 @@
         background: #f8fafc;
         border-radius: 0 6px 6px 0;
       }
+      .utterance.remote {
+        border-left-color: #16a34a;
+      }
       .utterance .label {
         font-size: 0.75rem;
         font-weight: 600;
@@ -176,8 +214,13 @@
       .utterance .unspoken {
         color: #94a3b8;
       }
-      #utterances:empty::after {
+      #localUtterances:empty::after {
         content: "Utterances will appear here once translation starts...";
+        color: #94a3b8;
+        font-style: italic;
+      }
+      #remoteUtterances:empty::after {
+        content: "Remote utterances will appear here when relayed...";
         color: #94a3b8;
         font-style: italic;
       }
@@ -187,7 +230,7 @@
         overflow-y: auto;
       }
       #languagesList:empty::after {
-        content: "Click \"Fetch Languages\" to load available languages...";
+        content: 'Click "Fetch Languages" to load available languages...';
         color: #94a3b8;
         font-style: italic;
       }
@@ -228,11 +271,21 @@
       <div class="row">
         <div>
           <label for="langIn">Source Language</label>
-          <input type="text" id="langIn" value="en-US" placeholder="e.g. en-US" />
+          <input
+            type="text"
+            id="langIn"
+            value="en-US"
+            placeholder="e.g. en-US"
+          />
         </div>
         <div>
           <label for="langOut">Target Language</label>
-          <input type="text" id="langOut" value="es-ES" placeholder="e.g. es-ES" />
+          <input
+            type="text"
+            id="langOut"
+            value="es-ES"
+            placeholder="e.g. es-ES"
+          />
         </div>
       </div>
       <div class="row">
@@ -244,6 +297,96 @@
           <label for="userName">User Name (optional)</label>
           <input type="text" id="userName" placeholder="e.g. Test User" />
         </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="inputSampleRate">Input Sample Rate</label>
+          <select id="inputSampleRate">
+            <option value="8000">8000 Hz</option>
+            <option value="16000" selected>16000 Hz</option>
+            <option value="24000">24000 Hz</option>
+          </select>
+        </div>
+        <div>
+          <label for="outputSampleRate">Output Sample Rate</label>
+          <select id="outputSampleRate">
+            <option value="8000">8000 Hz</option>
+            <option value="16000" selected>16000 Hz</option>
+            <option value="24000">24000 Hz</option>
+          </select>
+        </div>
+      </div>
+      <label>Transport</label>
+      <div class="checkbox-row">
+        <input
+          type="radio"
+          name="transport"
+          id="transportWebRTC"
+          value="webrtc"
+          checked
+          style="width: auto; margin: 0"
+        />
+        <label for="transportWebRTC">WebRTC</label>
+        <input
+          type="radio"
+          name="transport"
+          id="transportWebSocket"
+          value="websocket"
+          style="width: auto; margin: 0; margin-left: 12px"
+        />
+        <label for="transportWebSocket">WebSocket</label>
+      </div>
+      <label>Audio Source</label>
+      <div class="checkbox-row">
+        <input
+          type="radio"
+          name="audioSource"
+          id="audioSourceMic"
+          value="mic"
+          checked
+          style="width: auto; margin: 0"
+        />
+        <label for="audioSourceMic">Microphone</label>
+        <input
+          type="radio"
+          name="audioSource"
+          id="audioSourceFile"
+          value="file"
+          style="width: auto; margin: 0; margin-left: 12px"
+        />
+        <label for="audioSourceFile">Audio File</label>
+      </div>
+      <div id="audioFileSection" style="display: none">
+        <div class="file-input-row">
+          <input type="file" id="audioFileInput" accept="audio/*" />
+        </div>
+        <div id="audioFileName" class="file-name"></div>
+      </div>
+      <label>Audio Target</label>
+      <div class="checkbox-row">
+        <input
+          type="radio"
+          name="audioTarget"
+          id="audioTargetSpeaker"
+          value="speaker"
+          checked
+          style="width: auto; margin: 0"
+        />
+        <label for="audioTargetSpeaker">Speaker</label>
+        <input
+          type="radio"
+          name="audioTarget"
+          id="audioTargetFile"
+          value="file"
+          style="width: auto; margin: 0; margin-left: 12px"
+        />
+        <label for="audioTargetFile"
+          >Audio File<span
+            id="recordingIndicator"
+            class="recording-indicator"
+            style="display: none"
+          ></span
+        ></label>
       </div>
       <div class="checkbox-row">
         <input type="checkbox" id="canLangSwap" />
@@ -274,15 +417,35 @@
     <div class="section">
       <h2>Status</h2>
       <div class="info-row">
-        <span><span class="info-label">Connection:</span> <span id="statusBadge" class="status-badge status-disconnected">disconnected</span></span>
-        <span><span class="info-label">Session:</span> <span id="sessionId">—</span></span>
-        <span><span class="info-label">Languages:</span> <span id="detectedLangs">—</span></span>
+        <span
+          ><span class="info-label">Connection:</span>
+          <span id="statusBadge" class="status-badge status-disconnected"
+            >disconnected</span
+          ></span
+        >
+        <span
+          ><span class="info-label">Session:</span>
+          <span id="sessionId">—</span></span
+        >
+        <span
+          ><span class="info-label">Languages:</span>
+          <span id="detectedLangs">—</span></span
+        >
+        <span
+          ><span class="info-label">Speech Languages:</span>
+          <span id="speechLangs">—</span></span
+        >
       </div>
     </div>
 
     <div class="section">
-      <h2>Utterances</h2>
-      <div id="utterances"></div>
+      <h2>Local Utterances</h2>
+      <div id="localUtterances"></div>
+    </div>
+
+    <div class="section">
+      <h2>Remote Utterances</h2>
+      <div id="remoteUtterances"></div>
     </div>
 
     <div class="section">
@@ -293,7 +456,13 @@
     <audio id="audioPlayer" autoplay></audio>
 
     <script type="module">
-      import { SanasTranslationClient } from "../dist/index.js";
+      import {
+        SanasTranslationClient,
+        TranslationState,
+        getMicrophoneTrack,
+        WebSocketTransport,
+        WebRTCTransport,
+      } from "../dist/index.js";
 
       const ENDPOINT = "https://api.sanaslt.com";
 
@@ -309,17 +478,92 @@
       const disconnectBtn = document.getElementById("disconnectBtn");
       const resetBtn = document.getElementById("resetBtn");
       const muteBtn = document.getElementById("muteBtn");
+      const audioTargetFileRadio = document.getElementById("audioTargetFile");
+      const recordingIndicator = document.getElementById("recordingIndicator");
+      const inputSampleRateInput = document.getElementById("inputSampleRate");
+      const outputSampleRateInput = document.getElementById("outputSampleRate");
+      const transportWebSocketRadio =
+        document.getElementById("transportWebSocket");
+      const audioSourceFileRadio = document.getElementById("audioSourceFile");
+      const audioFileSection = document.getElementById("audioFileSection");
+      const audioFileInput = document.getElementById("audioFileInput");
+      const audioFileNameDiv = document.getElementById("audioFileName");
       const canLangSwapCheckbox = document.getElementById("canLangSwap");
       const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
       const sessionIdSpan = document.getElementById("sessionId");
       const detectedLangsSpan = document.getElementById("detectedLangs");
-      const utterancesDiv = document.getElementById("utterances");
+      const speechLangsSpan = document.getElementById("speechLangs");
+      const localUtterancesDiv = document.getElementById("localUtterances");
+      const remoteUtterancesDiv = document.getElementById("remoteUtterances");
       const logDiv = document.getElementById("log");
       const audioPlayer = document.getElementById("audioPlayer");
 
       let client = null;
-      let unsubscribers = [];
+      let transport = null;
+      let audioTrack = null;
+      let fileAudioContext = null;
+      let fileSourceNode = null;
+      let isMuted = false;
+      let isRecording = false;
+      let recordedSampleRate = 16000;
+      let pcmChunks = [];
+
+      // Two TranslationState instances: one for local, one for remote
+      let myState = null;
+      let theirState = null;
+
+      // Toggle audio file section visibility
+      document
+        .querySelectorAll('input[name="audioSource"]')
+        .forEach((radio) => {
+          radio.addEventListener("change", () => {
+            audioFileSection.style.display = audioSourceFileRadio.checked
+              ? "block"
+              : "none";
+          });
+        });
+
+      audioFileInput.addEventListener("change", () => {
+        const file = audioFileInput.files[0];
+        audioFileNameDiv.textContent = file ? file.name : "";
+      });
+
+      /**
+       * Decode an audio file and set up a MediaStreamTrack from it.
+       * The track is live immediately (so the transport can attach it),
+       * but actual audio data isn't pumped until startFilePlayback() is called.
+       */
+      async function prepareAudioFile(file, sampleRate) {
+        const arrayBuffer = await file.arrayBuffer();
+        const decodeCtx = new AudioContext({ sampleRate });
+        const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+        await decodeCtx.close();
+
+        const ctx = new AudioContext({ sampleRate });
+        fileAudioContext = ctx;
+
+        const destination = ctx.createMediaStreamDestination();
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(destination);
+        fileSourceNode = source;
+
+        source.onended = () => {
+          log("Audio file playback finished.", "info");
+        };
+
+        const track = destination.stream.getAudioTracks()[0];
+        if (!track) throw new Error("Failed to create track from audio file.");
+        return track;
+      }
+
+      function startFilePlayback() {
+        if (fileSourceNode) {
+          fileSourceNode.start();
+          log("Audio file playback started.", "info");
+        }
+      }
 
       // Logging
       function log(message, type = "") {
@@ -337,20 +581,21 @@
         statusBadge.className = `status-badge status-${state}`;
       }
 
-      // Render an utterance
-      function renderUtterance(utterance, index) {
-        let el = document.getElementById(`utterance-${index}`);
+      // Render an utterance into a container
+      function renderUtterance(container, utterance, index) {
+        const prefix = container === localUtterancesDiv ? "local" : "remote";
+        let el = document.getElementById(`${prefix}-utterance-${index}`);
         if (!el) {
           el = document.createElement("div");
-          el.className = "utterance";
-          el.id = `utterance-${index}`;
+          el.className = "utterance" + (prefix === "remote" ? " remote" : "");
+          el.id = `${prefix}-utterance-${index}`;
           el.innerHTML = `
             <div><span class="label">Transcription</span></div>
             <div class="transcription"></div>
             <div style="margin-top:4px"><span class="label">Translation</span></div>
             <div class="translation"></div>
           `;
-          utterancesDiv.appendChild(el);
+          container.appendChild(el);
         }
 
         const tDiv = el.querySelector(".transcription");
@@ -366,7 +611,7 @@
         return d.innerHTML;
       }
 
-      // Fetch Languages
+      // Fetch Languages (static method)
       fetchLangsBtn.addEventListener("click", async () => {
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
@@ -374,16 +619,14 @@
           return;
         }
 
-        const tempClient = new SanasTranslationClient({
-          apiKey,
-          endpoint: ENDPOINT,
-        });
-
         fetchLangsBtn.disabled = true;
         log("Fetching available languages...", "info");
 
         try {
-          const languages = await tempClient.fetchLanguages();
+          const languages = await SanasTranslationClient.fetchLanguages({
+            apiKey,
+            endpoint: ENDPOINT,
+          });
           languagesListDiv.innerHTML = "";
           for (const lang of languages) {
             const item = document.createElement("div");
@@ -401,7 +644,8 @@
 
       // Connect
       connectBtn.addEventListener("click", async () => {
-        utterancesDiv.innerHTML = "";
+        localUtterancesDiv.innerHTML = "";
+        remoteUtterancesDiv.innerHTML = "";
 
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
@@ -409,58 +653,142 @@
           return;
         }
 
-        client = new SanasTranslationClient({
-          apiKey,
-          endpoint: ENDPOINT,
-        });
+        const transportName = transportWebSocketRadio.checked
+          ? "WebSocket"
+          : "WebRTC";
 
-        log(`Created client (endpoint: ${ENDPOINT})`, "info");
-
-        // Subscribe to events
-        unsubscribers.push(
-          client.onConnectionStateChange((state) => {
+        // Create two TranslationState instances
+        myState = new TranslationState({
+          onConnectionStateChange: async (state) => {
             log(`Connection state: ${state}`, "info");
             updateStatus(state);
             updateButtons(state);
-          })
-        );
-
-        unsubscribers.push(
-          client.onUtterance((utterance, index) => {
-            renderUtterance(utterance, index);
-          })
-        );
-
-        unsubscribers.push(
-          client.onLanguages((languages) => {
+            if (state === "disconnected" && client) {
+              log("Server disconnected. Draining pending audio...", "info");
+              try {
+                await client.drainAudio();
+              } catch {
+                // client may already be torn down
+              }
+              log("Audio drained. Cleaning up.", "info");
+              cleanup();
+            }
+          },
+          onUtterance: (utterance, index) => {
+            renderUtterance(localUtterancesDiv, utterance, index);
+          },
+          onLanguages: (languages) => {
             const display = languages
-              .map((l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`)
+              .map(
+                (l) => `${l.shortCode} (${(l.probability * 100).toFixed(0)}%)`,
+              )
               .join(", ");
             detectedLangsSpan.textContent = display;
             log(`Detected languages: ${display}`, "info");
-          })
-        );
-
-        unsubscribers.push(
-          client.onError((error) => {
+          },
+          onError: (error) => {
             log(`Error: ${error}`, "error");
-          })
+          },
+          onSpeechLanguages: (langIn, langOut) => {
+            speechLangsSpan.textContent = `${langIn} → ${langOut}`;
+            log(`Speech languages: ${langIn} → ${langOut}`, "info");
+          },
+          onSpeechStop: () => {
+            log("Speech stop detected.", "info");
+          },
+          onReady: (id) => {
+            log(`Ready (id: ${id})`, "info");
+          },
+        });
+
+        theirState = new TranslationState({
+          onUtterance: (utterance, index) => {
+            renderUtterance(remoteUtterancesDiv, utterance, index);
+          },
+          onConnectionStateChange: (state) => {
+            log(`[Remote] Connection state: ${state}`, "info");
+          },
+        });
+
+        client = new SanasTranslationClient(myState, {
+          apiKey,
+          endpoint: ENDPOINT,
+          onMessage: (msg) => {
+            // Relay to remote participant: relay.send(JSON.stringify(msg));
+            log(
+              `[stream] ${msg.type}${msg.type === "lt" ? ":" + msg.lt.type : ""}`,
+            );
+          },
+          onAudioData: (samples, sampleRate) => {
+            if (isRecording) {
+              recordedSampleRate = sampleRate;
+              pcmChunks.push(new Int16Array(samples));
+            }
+          },
+        });
+
+        log(
+          `Created client (endpoint: ${ENDPOINT}, transport: ${transportName})`,
+          "info",
         );
 
         connectBtn.disabled = true;
         log("Connecting...");
 
         try {
-          const connectOptions = {};
+          const useWebSocket = transportWebSocketRadio.checked;
+          transport = useWebSocket
+            ? new WebSocketTransport()
+            : new WebRTCTransport();
+
+          const inputSR = parseInt(inputSampleRateInput.value, 10);
+          const sampleRate = inputSR > 0 ? inputSR : 16000;
+
+          const usingFileInput = audioSourceFileRadio.checked;
+          if (usingFileInput) {
+            const file = audioFileInput.files[0];
+            if (!file) {
+              log("Please select an audio file.", "error");
+              cleanup();
+              return;
+            }
+            log(`Using audio file: ${file.name}`, "info");
+            audioTrack = await prepareAudioFile(file, sampleRate);
+          } else {
+            audioTrack = await getMicrophoneTrack({ sampleRate });
+          }
+
+          const connectOptions = { transport, audioTrack };
           const convId = conversationIdInput.value.trim();
           const uName = userNameInput.value.trim();
           if (convId) connectOptions.conversationId = convId;
           if (uName) connectOptions.userName = uName;
+          const outputSR = parseInt(outputSampleRateInput.value, 10);
+          if (inputSR > 0) connectOptions.inputSampleRate = inputSR;
+          if (outputSR > 0) connectOptions.outputSampleRate = outputSR;
 
           const { audio } = await client.connect(connectOptions);
+
           audioPlayer.srcObject = audio;
-          log("Connected and receiving audio.", "success");
-          sessionIdSpan.textContent = client.sessionId ?? "—";
+
+          const recordingToFile = audioTargetFileRadio.checked;
+          if (recordingToFile) {
+            audioPlayer.muted = true;
+          } else {
+            audioPlayer.muted = false;
+          }
+
+          log(
+            recordingToFile
+              ? "Connected. Will record output to file."
+              : "Connected and receiving audio.",
+            "success",
+          );
+
+          sessionIdSpan.textContent = transport.sessionId ?? "—";
+
+          // Incoming relay messages from remote participant would go here:
+          // relay.onMessage((data) => theirState.handleMessage(JSON.parse(data)));
 
           // Auto-reset with configured languages
           const langIn = langInInput.value.trim();
@@ -468,9 +796,25 @@
           if (langIn && langOut) {
             const canLangSwap = canLangSwapCheckbox.checked;
             const detectLanguages = detectLangsCheckbox.checked;
-            log(`Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
-            await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
+            log(
+              `Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+              "info",
+            );
+            await client.reset({
+              langIn,
+              langOut,
+              canLangSwap,
+              detectLanguages,
+            });
             log("Reset complete. Translation active.", "success");
+
+            if (recordingToFile) {
+              startRecording();
+            }
+
+            if (usingFileInput) {
+              startFilePlayback();
+            }
           }
         } catch (err) {
           log(`Connection failed: ${err.message}`, "error");
@@ -499,7 +843,10 @@
         try {
           const canLangSwap = canLangSwapCheckbox.checked;
           const detectLanguages = detectLangsCheckbox.checked;
-          log(`Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`, "info");
+          log(
+            `Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+            "info",
+          );
           await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
           log("Reset complete.", "success");
         } catch (err) {
@@ -509,11 +856,90 @@
 
       // Mute toggle
       muteBtn.addEventListener("click", () => {
-        if (!client) return;
-        client.isAudioEnabled = !client.isAudioEnabled;
-        muteBtn.textContent = client.isAudioEnabled ? "Mute" : "Unmute";
-        log(`Microphone ${client.isAudioEnabled ? "unmuted" : "muted"}.`, "info");
+        if (!transport) return;
+        isMuted = !isMuted;
+        transport.setAudioEnabled(!isMuted);
+        muteBtn.textContent = isMuted ? "Unmute" : "Mute";
+        log(`Microphone ${isMuted ? "muted" : "unmuted"}.`, "info");
       });
+
+      // WAV encoder: wraps raw Int16 PCM samples in a WAV header.
+      function encodeWAV(int16Samples, sampleRate) {
+        const dataBytes = int16Samples.length * 2;
+        const buffer = new ArrayBuffer(44 + dataBytes);
+        const view = new DataView(buffer);
+
+        function writeStr(offset, str) {
+          for (let i = 0; i < str.length; i++)
+            view.setUint8(offset + i, str.charCodeAt(i));
+        }
+
+        writeStr(0, "RIFF");
+        view.setUint32(4, 36 + dataBytes, true);
+        writeStr(8, "WAVE");
+        writeStr(12, "fmt ");
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, "data");
+        view.setUint32(40, dataBytes, true);
+
+        new Uint8Array(buffer, 44).set(
+          new Uint8Array(int16Samples.buffer, int16Samples.byteOffset, dataBytes),
+        );
+
+        return new Blob([buffer], { type: "audio/wav" });
+      }
+
+      // Recording: collect raw Int16 PCM chunks via onAudioData callback.
+      function startRecording() {
+        pcmChunks = [];
+        isRecording = true;
+        audioPlayer.muted = true;
+        recordingIndicator.style.display = "inline-block";
+        log("Recording output audio...", "info");
+      }
+
+      function stopRecording() {
+        if (!isRecording) return;
+        isRecording = false;
+        recordingIndicator.style.display = "none";
+
+        if (pcmChunks.length > 0) {
+          const totalLength = pcmChunks.reduce(
+            (acc, c) => acc + c.length,
+            0,
+          );
+          const allSamples = new Int16Array(totalLength);
+          let offset = 0;
+          for (const chunk of pcmChunks) {
+            allSamples.set(chunk, offset);
+            offset += chunk.length;
+          }
+          pcmChunks = [];
+
+          const blob = encodeWAV(allSamples, recordedSampleRate);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `translation-output-${Date.now()}.wav`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          log(
+            `Recording saved (${(blob.size / 1024).toFixed(1)} KB).`,
+            "success",
+          );
+        } else {
+          log("No audio data recorded.", "error");
+        }
+      }
 
       function updateButtons(state) {
         const connected = state === "connected";
@@ -524,14 +950,36 @@
       }
 
       function cleanup() {
-        for (const unsub of unsubscribers) unsub();
-        unsubscribers = [];
+        stopRecording();
+
+        if (fileSourceNode) {
+          try {
+            fileSourceNode.stop();
+          } catch {
+            // already stopped
+          }
+          fileSourceNode = null;
+        }
+        if (fileAudioContext) {
+          fileAudioContext.close();
+          fileAudioContext = null;
+        }
+        if (audioTrack) {
+          audioTrack.stop();
+          audioTrack = null;
+        }
         client = null;
+        transport = null;
+        myState = null;
+        theirState = null;
+        isMuted = false;
         updateStatus("disconnected");
         updateButtons("disconnected");
         sessionIdSpan.textContent = "—";
         detectedLangsSpan.textContent = "—";
+        speechLangsSpan.textContent = "—";
         muteBtn.textContent = "Mute";
+        audioPlayer.muted = false;
         audioPlayer.srcObject = null;
       }
     </script>
