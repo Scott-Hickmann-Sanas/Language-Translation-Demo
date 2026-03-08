@@ -135,6 +135,7 @@ const client = new SanasTranslationClient(translationState, options);
 | `accessToken` | `string?`                         | OAuth token (use this or `apiKey`)                    |
 | `endpoint`    | `string`                          | Server URL (e.g. `https://api.sanaslt.com`)           |
 | `onMessage`   | `(message: StreamMessage) => void`| Fires for every message — use this for relay          |
+| `onAudioData` | `(samples: Int16Array, sampleRate: number) => void` | Fires with raw output audio (Int16 PCM) as received from the server. Works with both WebRTC and WebSocket transports. |
 
 #### `client.connect(options): Promise<ConnectResult>`
 
@@ -150,6 +151,20 @@ Connects to the translation server through the given transport.
 | `outputSampleRate`| `SampleRate?`       |          | Output sample rate in Hz (default: 16000)      |
 
 Returns `{ audio: MediaStream }` — the translated audio stream.
+
+#### `client.drainAudio(): Promise<void>`
+
+Waits for all pending audio playback and scheduled speech delimiters to complete. Call this before `disconnect()` on server-initiated disconnects to avoid cutting off in-flight audio.
+
+```typescript
+// On server disconnect, drain before cleanup
+state.onConnectionStateChange = async (connectionState) => {
+  if (connectionState === "disconnected") {
+    await client.drainAudio();
+    client.disconnect();
+  }
+};
+```
 
 #### `client.disconnect()`
 
@@ -190,6 +205,10 @@ A Zod-validated discriminated union representing all messages in the client stre
 | `transport` | `{ type: "transport", state: ConnectionState }` | Connection state change |
 | `error`     | `{ type: "error", message: string }`     | Error message                  |
 
+### `float32ToInt16(float32: Float32Array): Int16Array`
+
+Converts Float32 PCM samples (range -1..1) to Int16 PCM. Useful when working with raw audio data from `onAudioData` or Web Audio API pipelines.
+
 ### `getMicrophoneTrack(options?): Promise<MediaStreamTrack>`
 
 Helper to acquire a microphone audio track. The caller owns the returned track and must call `track.stop()` when done.
@@ -218,6 +237,9 @@ transport.setAudioEnabled(false);
 
 // Session ID (available after connect)
 console.log(transport.sessionId);
+
+// Wait for pending audio before cleanup (useful on server disconnect)
+await transport.drainAudio();
 ```
 
 ## Test Client
@@ -231,7 +253,7 @@ npm run build
 npx serve .
 ```
 
-Then open [http://localhost:3000/examples/](http://localhost:3000/examples/) in your browser. Enter your API key, configure source/target languages, and click **Connect** to start a live translation session. The example demonstrates the two-state pattern with separate local and remote utterance displays.
+Then open [http://localhost:3000/examples/](http://localhost:3000/examples/) in your browser. Enter your API key, configure source/target languages, and click **Connect** to start a live translation session. The example demonstrates the two-state pattern with separate local and remote utterance displays, audio file input (upload a WAV/MP3 instead of using the microphone), and output recording to WAV via the `onAudioData` callback.
 
 ## Development
 
