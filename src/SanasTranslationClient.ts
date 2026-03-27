@@ -57,6 +57,8 @@ export class SanasTranslationClient {
         onAudioData: this.options.onAudioData,
       });
 
+      this.audioStreamStartTime = ctx.currentTime;
+
       // Keep the AudioContext clock running (for speech_delimiter scheduling)
       // without consuming the audio stream, so callers can record/play it.
       const osc = ctx.createOscillator();

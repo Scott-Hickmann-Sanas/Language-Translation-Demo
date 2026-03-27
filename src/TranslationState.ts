@@ -279,16 +279,27 @@ export class TranslationState {
         const oldTransBoundary = this.transcriptionsSpeechBoundary;
         const oldTranslBoundary = this.translationsSpeechBoundary;
 
-        this.transcriptionsSpeechBoundary = {
+        const newTransBoundary: CharacterPosition = {
           utteranceIdx: transcription.utterance_idx,
           wordIdx: transcription.word_idx,
           charIdx: transcription.char_idx,
         };
-        this.translationsSpeechBoundary = {
+        const newTranslBoundary: CharacterPosition = {
           utteranceIdx: translation.utterance_idx,
           wordIdx: translation.word_idx,
           charIdx: translation.char_idx,
         };
+
+        if (
+          !positionLessThan(newTransBoundary, this.transcriptionsSpeechBoundary)
+        ) {
+          this.transcriptionsSpeechBoundary = newTransBoundary;
+        }
+        if (
+          !positionLessThan(newTranslBoundary, this.translationsSpeechBoundary)
+        ) {
+          this.translationsSpeechBoundary = newTranslBoundary;
+        }
 
         this.notifyAffectedUtterances(
           oldTransBoundary,

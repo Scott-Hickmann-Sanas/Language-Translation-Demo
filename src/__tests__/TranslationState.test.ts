@@ -368,6 +368,153 @@ describe("TranslationState", () => {
       expect(display.transcription.spokenText).toBe("helloworld");
       expect(display.transcription.unspokenText).toBe("!");
     });
+
+    it("ignores a speech_delimiter that would move the transcription boundary backwards", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage(
+        lt({
+          type: "transcription",
+          transcription: {
+            complete: [makeWord("hello"), makeWord("world"), makeWord("!")],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 1.0,
+            transcription: { utterance_idx: 0, word_idx: 2, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      expect(state.getUtteranceDisplay(0).transcription.spokenText).toBe(
+        "helloworld",
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 0.5,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      const display = state.getUtteranceDisplay(0);
+      expect(display.transcription.spokenText).toBe("helloworld");
+      expect(display.transcription.unspokenText).toBe("!");
+    });
+
+    it("ignores a speech_delimiter that would move the translation boundary backwards", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage(
+        lt({
+          type: "transcription",
+          transcription: {
+            complete: [makeWord("hello")],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+      state.handleMessage(
+        lt({
+          type: "translation",
+          translation: {
+            complete: [makeWord("hola"), makeWord("mundo")],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 1.0,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 2, char_idx: 0 },
+          },
+        }),
+      );
+
+      expect(state.getUtteranceDisplay(0).translation.spokenText).toBe(
+        "holamundo",
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 0.5,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+          },
+        }),
+      );
+
+      const display = state.getUtteranceDisplay(0);
+      expect(display.translation.spokenText).toBe("holamundo");
+    });
+
+    it("accepts a speech_delimiter that advances the boundary forward", () => {
+      const callbacks = makeCallbacks();
+      const state = new TranslationState(callbacks);
+
+      state.handleMessage(
+        lt({
+          type: "transcription",
+          transcription: {
+            complete: [makeWord("hello"), makeWord("world"), makeWord("!")],
+            partial: [],
+            utterance_idx: 0,
+          },
+        }),
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 0.5,
+            transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      expect(state.getUtteranceDisplay(0).transcription.spokenText).toBe(
+        "hello",
+      );
+
+      state.handleMessage(
+        lt({
+          type: "speech_delimiter",
+          speech_delimiter: {
+            time: 1.0,
+            transcription: { utterance_idx: 0, word_idx: 3, char_idx: 0 },
+            translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
+          },
+        }),
+      );
+
+      const display = state.getUtteranceDisplay(0);
+      expect(display.transcription.spokenText).toBe("helloworld!");
+      expect(display.transcription.unspokenText).toBe("");
+    });
   });
 
   describe("handleMessage — transport (connection state)", () => {

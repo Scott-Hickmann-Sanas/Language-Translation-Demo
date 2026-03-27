@@ -6,8 +6,8 @@ import {
   ResetOptions,
   SanasTranslationClientOptions,
   StreamMessage,
-  Transport,
   TranslationStateCallbacks,
+  Transport,
   TransportCallbacks,
 } from "../types";
 
@@ -128,7 +128,8 @@ class MockTransport implements Transport {
 
 // --- Helpers ---
 
-const mockAudioTrack = new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+const mockAudioTrack =
+  new MockMediaStreamTrack() as unknown as MediaStreamTrack;
 
 function makeCallbacks(
   overrides: Partial<TranslationStateCallbacks> = {},
@@ -257,12 +258,32 @@ describe("SanasTranslationClient", () => {
       client.disconnect();
     });
 
+    it("sets audioStreamStartTime to ctx.currentTime after connect", async () => {
+      const { client } = createClient();
+      const transport = new MockTransport();
+
+      await client.connect({ transport, audioTrack: mockAudioTrack });
+
+      const startTime = (client as unknown as Record<string, unknown>)[
+        "audioStreamStartTime"
+      ] as number;
+      const ctx = (client as unknown as Record<string, unknown>)[
+        "audioContext"
+      ] as MockAudioContext;
+
+      expect(startTime).toBe(ctx.currentTime);
+
+      client.disconnect();
+    });
+
     it("cleans up and sets disconnected on connect failure", async () => {
       const { client, callbacks } = createClient();
       const transport = new MockTransport();
-      transport.connect = jest.fn().mockRejectedValue(
-        new Error("Connection failed"),
-      ) as MockTransport["connect"];
+      transport.connect = jest
+        .fn()
+        .mockRejectedValue(
+          new Error("Connection failed"),
+        ) as MockTransport["connect"];
 
       await expect(
         client.connect({ transport, audioTrack: mockAudioTrack }),
@@ -277,9 +298,11 @@ describe("SanasTranslationClient", () => {
       const { client } = createClient();
 
       const failTransport = new MockTransport();
-      failTransport.connect = jest.fn().mockRejectedValue(
-        new Error("Connection failed"),
-      ) as MockTransport["connect"];
+      failTransport.connect = jest
+        .fn()
+        .mockRejectedValue(
+          new Error("Connection failed"),
+        ) as MockTransport["connect"];
 
       await client
         .connect({ transport: failTransport, audioTrack: mockAudioTrack })
@@ -436,9 +459,7 @@ describe("SanasTranslationClient", () => {
       transport.callbacks!.onMessage({
         type: "languages",
         languages: {
-          languages: [
-            { short_code: "en", name: "English", probability: 0.9 },
-          ],
+          languages: [{ short_code: "en", name: "English", probability: 0.9 }],
         },
       });
 
