@@ -125,6 +125,17 @@ export const WrappedReadyMessage = z.object({
 });
 export type WrappedReadyMessage = z.infer<typeof WrappedReadyMessage>;
 
+export const ErrorMessage = z.object({
+  message: z.string(),
+});
+export type ErrorMessage = z.infer<typeof ErrorMessage>;
+
+export const WrappedErrorMessage = z.object({
+  type: z.literal("error"),
+  error: ErrorMessage,
+});
+export type WrappedErrorMessage = z.infer<typeof WrappedErrorMessage>;
+
 // Union Message for all message types
 export const LTMessage = z.discriminatedUnion("type", [
   WrappedResetMessage,
@@ -136,6 +147,7 @@ export const LTMessage = z.discriminatedUnion("type", [
   WrappedSpeechStopMessage,
   WrappedLanguagesMessage,
   WrappedReadyMessage,
+  WrappedErrorMessage,
 ]);
 
 // Type inference

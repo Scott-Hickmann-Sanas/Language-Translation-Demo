@@ -329,6 +329,10 @@ export class TranslationState {
         this.callbacks.onSpeechStop?.();
         break;
       }
+      case "error": {
+        this.callbacks.onError?.(message.error.message);
+        break;
+      }
       default: {
         console.warn("[LT] Unknown message type:", message.type);
         break;
