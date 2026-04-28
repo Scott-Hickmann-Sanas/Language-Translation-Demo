@@ -1,5 +1,7 @@
 import { SanasTranslationClient } from "../SanasTranslationClient";
 import { TranslationState } from "../TranslationState";
+import { WebRTCTransport } from "../WebRTCTransport";
+import { WebSocketTransport } from "../WebSocketTransport";
 import {
   ConnectOptions,
   ConnectResult,
@@ -10,8 +12,6 @@ import {
   Transport,
   TransportCallbacks,
 } from "../types";
-
-// --- Mock browser APIs ---
 
 class MockMediaStreamTrack {
   kind = "audio";
@@ -26,82 +26,152 @@ class MockMediaStream {
     this.tracks = tracks;
   }
 
-  getTracks() {
+  getTracks(): MockMediaStreamTrack[] {
     return this.tracks;
   }
+}
 
-  getAudioTracks() {
-    return this.tracks.filter((t) => t.kind === "audio");
+class MockAudioBuffer {
+  private channel = new Float32Array(4096);
+
+  getChannelData(): Float32Array {
+    return this.channel;
   }
-}
-
-// --- Mock Web Audio API ---
-
-class MockGainNode {
-  gain = { value: 1 };
-  connect = jest.fn();
-  disconnect = jest.fn();
-}
-
-class MockAudioSourceNode {
-  connect = jest.fn();
-  disconnect = jest.fn();
 }
 
 class MockAudioBufferSourceNode {
   buffer: unknown = null;
   onended: (() => void) | null = null;
+  startTime: number | undefined;
   connect = jest.fn();
   disconnect = jest.fn();
-  start = jest.fn(() => {
-    queueMicrotask(() => this.onended?.());
+  start = jest.fn((when?: number) => {
+    this.startTime = when;
   });
   stop = jest.fn();
 }
-
-class MockOscillatorNode {
-  connect = jest.fn();
-  disconnect = jest.fn();
-  start = jest.fn();
-  stop = jest.fn();
-}
-
-class MockAudioDestinationNode {}
-
-let createdBufferSourceNodes: MockAudioBufferSourceNode[] = [];
 
 class MockAudioContext {
   sampleRate = 48000;
   currentTime = 0;
   state = "running";
-  destination = new MockAudioDestinationNode();
-  createMediaStreamSource = jest.fn(() => new MockAudioSourceNode());
-  createBuffer = jest.fn(() => ({}));
+  destination = {};
+  audioWorklet = { addModule: jest.fn(() => Promise.resolve()) };
+  createBuffer = jest.fn(() => new MockAudioBuffer());
   createBufferSource = jest.fn(() => {
     const node = new MockAudioBufferSourceNode();
     createdBufferSourceNodes.push(node);
     return node;
   });
-  createGain = jest.fn(() => new MockGainNode());
-  createOscillator = jest.fn(() => new MockOscillatorNode());
+  createGain = jest.fn(() => ({
+    gain: { value: 1 },
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+  }));
+  createOscillator = jest.fn(() => ({
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+    start: jest.fn(),
+    stop: jest.fn(),
+  }));
+  createMediaStreamSource = jest.fn(() => ({
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+  }));
+  createMediaStreamDestination = jest.fn(() => ({
+    stream: new MockMediaStream() as unknown as MediaStream,
+  }));
+  createScriptProcessor = jest.fn(() => ({
+    onaudioprocess: null,
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+  }));
   resume = jest.fn(() => Promise.resolve());
   close = jest.fn(() => Promise.resolve());
 }
 
-// Install mocks globally
-(globalThis as unknown as Record<string, unknown>).AudioContext =
-  MockAudioContext;
-(globalThis as unknown as Record<string, unknown>).MediaStream =
-  MockMediaStream;
+class MockAudioWorkletNode {
+  port: { onmessage: ((event: MessageEvent) => void) | null } = {
+    onmessage: null,
+  };
+  connect = jest.fn();
+  disconnect = jest.fn();
 
-const mockFetch = jest.fn();
-(globalThis as unknown as Record<string, unknown>).fetch = mockFetch;
+  constructor() {
+    latestWorkletNode = this;
+  }
+}
 
-// --- Mock Transport ---
+class MockDataChannel {
+  readyState: RTCDataChannelState = "connecting";
+  sent: string[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+}
+
+class MockPeerConnection {
+  connectionState: RTCPeerConnectionState = "new";
+  iceGatheringState: RTCIceGatheringState = "complete";
+  localDescription: RTCSessionDescriptionInit | null = null;
+  dataChannel = new MockDataChannel();
+  ontrack: ((event: RTCTrackEvent) => void) | null = null;
+  onconnectionstatechange: ((event: Event) => void) | null = null;
+  onicegatheringstatechange: ((event: Event) => void) | null = null;
+  onnegotiationneeded: ((event: Event) => void) | null = null;
+  createDataChannel = jest.fn(() => this.dataChannel);
+  addTrack = jest.fn();
+  createOffer = jest.fn(() =>
+    Promise.resolve({ type: "offer" as RTCSdpType, sdp: "offer-sdp" }),
+  );
+  setLocalDescription = jest.fn((description: RTCSessionDescriptionInit) => {
+    this.localDescription = description;
+    return Promise.resolve();
+  });
+  setRemoteDescription = jest.fn(() => Promise.resolve());
+  close = jest.fn();
+
+  constructor() {
+    latestPeerConnection = this;
+  }
+}
+
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 3;
+
+  readyState = MockWebSocket.CONNECTING;
+  binaryType: BinaryType = "blob";
+  sent: unknown[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+
+  constructor(public url: string) {
+    latestWebSocket = this;
+  }
+
+  send(data: unknown): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    this.readyState = MockWebSocket.CLOSED;
+  }
+}
 
 class MockTransport implements Transport {
   callbacks: TransportCallbacks | null = null;
   sessionId: string | null = "sess-123";
+  configureRequestId = "cfg-1";
+  flushRequestId = "flush-1";
 
   connect = jest.fn(
     async (
@@ -111,14 +181,16 @@ class MockTransport implements Transport {
     ): Promise<ConnectResult> => {
       this.callbacks = callbacks;
       callbacks.onConnectionStateChange("connected");
-      return {
-        audio: new MockMediaStream() as unknown as MediaStream,
-      };
+      return { audio: new MockMediaStream() as unknown as MediaStream };
     },
   );
 
   configure = jest.fn((_options: ResetOptions): string | null => {
-    return "reset-id-1";
+    return this.configureRequestId;
+  });
+
+  flush = jest.fn((): string | null => {
+    return this.flushRequestId;
   });
 
   disconnect = jest.fn();
@@ -126,10 +198,26 @@ class MockTransport implements Transport {
   setAudioEnabled = jest.fn();
 }
 
-// --- Helpers ---
+let latestPeerConnection: MockPeerConnection | null = null;
+let latestWebSocket: MockWebSocket | null = null;
+let latestWorkletNode: MockAudioWorkletNode | null = null;
+let createdBufferSourceNodes: MockAudioBufferSourceNode[] = [];
 
+const mockFetch = jest.fn();
 const mockAudioTrack =
   new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+
+function installBrowserMocks(): void {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  globals.AudioContext = MockAudioContext;
+  globals.MediaStream = MockMediaStream;
+  globals.RTCPeerConnection = MockPeerConnection;
+  globals.WebSocket = MockWebSocket;
+  globals.AudioWorkletNode = MockAudioWorkletNode;
+  globals.fetch = mockFetch;
+  URL.createObjectURL = jest.fn(() => "blob:mock");
+  URL.revokeObjectURL = jest.fn();
+}
 
 function makeCallbacks(
   overrides: Partial<TranslationStateCallbacks> = {},
@@ -137,9 +225,11 @@ function makeCallbacks(
   return {
     onUtterance: jest.fn(),
     onLanguages: jest.fn(),
-    onReady: jest.fn(),
-    onSpeechLanguages: jest.fn(),
-    onSpeechStop: jest.fn(),
+    onConfigured: jest.fn(),
+    onLanguageRoute: jest.fn(),
+    onOutputSpeechEnded: jest.fn(),
+    onTranslationEnded: jest.fn(),
+    onFlushed: jest.fn(),
     onError: jest.fn(),
     onConnectionStateChange: jest.fn(),
     ...overrides,
@@ -148,738 +238,323 @@ function makeCallbacks(
 
 function createClient(
   overrides: Partial<{
-    apiKey: string;
-    accessToken: string;
-    endpoint: string;
     callbacks: TranslationStateCallbacks;
     onMessage: (message: StreamMessage) => void;
   }> = {},
-) {
+): {
+  client: SanasTranslationClient;
+  callbacks: TranslationStateCallbacks;
+  state: TranslationState;
+} {
   const callbacks = overrides.callbacks ?? makeCallbacks();
-  const translationState = new TranslationState(callbacks);
-  const client = new SanasTranslationClient(translationState, {
-    apiKey: overrides.apiKey ?? "test-key",
-    accessToken: overrides.accessToken,
-    endpoint: overrides.endpoint ?? "https://lt.test.com",
+  const state = new TranslationState(callbacks);
+  const client = new SanasTranslationClient(state, {
+    apiKey: "test-key",
+    endpoint: "https://lt.test.com",
     onMessage: overrides.onMessage,
   });
-  return { client, callbacks, translationState };
-}
-
-async function flush() {
-  for (let i = 0; i < 5; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
+  return { client, callbacks, state };
 }
 
 async function connectClient(
   client: SanasTranslationClient,
-  transport?: MockTransport,
-) {
-  const t = transport ?? new MockTransport();
-  const result = await client.connect({
-    transport: t,
-    audioTrack: mockAudioTrack,
-  });
-  return { result, transport: t };
+  transport = new MockTransport(),
+): Promise<MockTransport> {
+  await client.connect({ transport, audioTrack: mockAudioTrack });
+  return transport;
 }
 
-// --- Tests ---
+async function tick(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 describe("SanasTranslationClient", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    installBrowserMocks();
+    latestPeerConnection = null;
+    latestWebSocket = null;
+    latestWorkletNode = null;
     createdBufferSourceNodes = [];
   });
 
-  describe("connect", () => {
-    it("throws if already connected", async () => {
-      const { client } = createClient();
-      await connectClient(client);
+  it("routes connection state and direct v3 messages", async () => {
+    const onMessage = jest.fn();
+    const { client, callbacks, state } = createClient({ onMessage });
+    const transport = await connectClient(client);
 
-      await expect(
-        client.connect({
-          transport: new MockTransport(),
-          audioTrack: mockAudioTrack,
+    transport.callbacks?.onMessage({
+      type: "transcription",
+      utterance_idx: 0,
+      complete: [{ word: "hello", start: 0, end: 1 }],
+      partial: [],
+    });
+
+    expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith("connecting");
+    expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith("connected");
+    expect(onMessage).toHaveBeenCalledWith({
+      type: "transcription",
+      utterance_idx: 0,
+      complete: [{ word: "hello", start: 0, end: 1 }],
+      partial: [],
+    });
+    expect(state.getUtteranceDisplay(0).transcription.complete).toEqual([
+      { word: "hello", start: 0, end: 1 },
+    ]);
+  });
+
+  it("reset sends v3 configure options and waits for configured", async () => {
+    const { client, callbacks } = createClient();
+    const transport = await connectClient(client);
+    const resetPromise = client.reset({
+      languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+      voiceId: "voice-1",
+      glossary: [{ Sanas: "Sanas" }],
+      features: ["language_identification"],
+    });
+
+    expect(transport.configure).toHaveBeenCalledWith({
+      languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+      voiceId: "voice-1",
+      glossary: [{ Sanas: "Sanas" }],
+      features: ["language_identification"],
+    });
+
+    transport.callbacks?.onMessage({
+      type: "configured",
+      request_id: "cfg-1",
+    });
+
+    await expect(resetPromise).resolves.toBeUndefined();
+    expect(callbacks.onConfigured).toHaveBeenCalledWith("cfg-1");
+  });
+
+  it("flush sends v3 flush and waits for flushed", async () => {
+    const { client, callbacks } = createClient();
+    const transport = await connectClient(client);
+    const flushPromise = client.flush();
+
+    expect(transport.flush).toHaveBeenCalledTimes(1);
+    transport.callbacks?.onMessage({ type: "flushed", request_id: "flush-1" });
+
+    await expect(flushPromise).resolves.toBeUndefined();
+    expect(callbacks.onFlushed).toHaveBeenCalledWith("flush-1");
+  });
+
+  it("schedules output_text_boundary from the output_speech_started timeline", async () => {
+    const { client, callbacks } = createClient();
+    const transport = await connectClient(client);
+
+    transport.callbacks?.onMessage({
+      type: "transcription",
+      utterance_idx: 0,
+      complete: [{ word: "hello", start: 0, end: 1 }],
+      partial: [],
+    });
+
+    expect(callbacks.onUtterance).toHaveBeenCalledTimes(1);
+
+    transport.callbacks?.onMessage({
+      type: "output_text_boundary",
+      utterance_idx: 0,
+      output_time: 1.25,
+      transcription: { word_idx: 0, char_idx: 2 },
+    });
+
+    expect(callbacks.onUtterance).toHaveBeenCalledTimes(1);
+    expect(createdBufferSourceNodes).toHaveLength(0);
+
+    transport.callbacks?.onMessage({
+      type: "output_speech_started",
+      utterance_idx: 0,
+      output_time: 1,
+    });
+
+    expect(createdBufferSourceNodes).toHaveLength(1);
+    expect(createdBufferSourceNodes[0].start).toHaveBeenCalledWith(0.25);
+    expect(callbacks.onUtterance).toHaveBeenCalledTimes(1);
+
+    createdBufferSourceNodes[0].onended?.();
+
+    expect(callbacks.onUtterance).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        transcription: expect.objectContaining({ spokenText: "he" }),
+      }),
+      0,
+    );
+  });
+});
+
+describe("WebRTCTransport", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    installBrowserMocks();
+    latestPeerConnection = null;
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          type: "answer",
+          sdp: "answer-sdp",
+          session_id: "webrtc-session",
         }),
-      ).rejects.toThrow("Already connected. Call disconnect() first.");
-    });
-
-    it("notifies connecting then connected state via callbacks", async () => {
-      const { client, callbacks } = createClient();
-      await connectClient(client);
-
-      const calls = (callbacks.onConnectionStateChange as jest.Mock).mock.calls;
-      expect(calls[0][0]).toBe("connecting");
-      expect(calls[1][0]).toBe("connected");
-
-      client.disconnect();
-    });
-
-    it("returns audio stream on successful connect", async () => {
-      const { client } = createClient();
-      const { result } = await connectClient(client);
-
-      expect(result.audio).toBeDefined();
-
-      client.disconnect();
-    });
-
-    it("calls transport.connect with correct arguments", async () => {
-      const { client } = createClient();
-      const transport = new MockTransport();
-
-      await client.connect({ transport, audioTrack: mockAudioTrack });
-
-      expect(transport.connect).toHaveBeenCalledWith(
-        expect.objectContaining({ transport, audioTrack: mockAudioTrack }),
-        expect.objectContaining({
-          apiKey: "test-key",
-          endpoint: "https://lt.test.com",
-        }),
-        expect.objectContaining({
-          onMessage: expect.any(Function),
-          onError: expect.any(Function),
-          onConnectionStateChange: expect.any(Function),
-        }),
-      );
-
-      client.disconnect();
-    });
-
-    it("calls transport.setAudioEnabled after successful connect", async () => {
-      const { client } = createClient();
-      const transport = new MockTransport();
-
-      await client.connect({ transport, audioTrack: mockAudioTrack });
-
-      expect(transport.setAudioEnabled).toHaveBeenCalledWith(true);
-
-      client.disconnect();
-    });
-
-    it("sets audioStreamStartTime to ctx.currentTime after connect", async () => {
-      const { client } = createClient();
-      const transport = new MockTransport();
-
-      await client.connect({ transport, audioTrack: mockAudioTrack });
-
-      const startTime = (client as unknown as Record<string, unknown>)[
-        "audioStreamStartTime"
-      ] as number;
-      const ctx = (client as unknown as Record<string, unknown>)[
-        "audioContext"
-      ] as MockAudioContext;
-
-      expect(startTime).toBe(ctx.currentTime);
-
-      client.disconnect();
-    });
-
-    it("cleans up and sets disconnected on connect failure", async () => {
-      const { client, callbacks } = createClient();
-      const transport = new MockTransport();
-      transport.connect = jest
-        .fn()
-        .mockRejectedValue(
-          new Error("Connection failed"),
-        ) as MockTransport["connect"];
-
-      await expect(
-        client.connect({ transport, audioTrack: mockAudioTrack }),
-      ).rejects.toThrow("Connection failed");
-
-      expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith(
-        "disconnected",
-      );
-    });
-
-    it("allows reconnect after connect failure", async () => {
-      const { client } = createClient();
-
-      const failTransport = new MockTransport();
-      failTransport.connect = jest
-        .fn()
-        .mockRejectedValue(
-          new Error("Connection failed"),
-        ) as MockTransport["connect"];
-
-      await client
-        .connect({ transport: failTransport, audioTrack: mockAudioTrack })
-        .catch(() => {});
-
-      const { result } = await connectClient(client);
-      expect(result.audio).toBeDefined();
-
-      client.disconnect();
     });
   });
 
-  describe("disconnect", () => {
-    it("disconnects transport and notifies disconnected state", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
+  it("posts offers to /v3/webrtc and sends v3 data-channel messages", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const transport = new WebRTCTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: "conversation-1",
+        sessionName: "browser",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com/" },
+      callbacks,
+    );
 
-      (callbacks.onConnectionStateChange as jest.Mock).mockClear();
+    await tick();
+    latestPeerConnection?.onnegotiationneeded?.(new Event("negotiationneeded"));
+    await tick();
 
-      client.disconnect();
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://lt.test.com/v3/webrtc",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-API-Key": "api-key" }),
+        body: JSON.stringify({ type: "offer", sdp: "offer-sdp" }),
+      }),
+    );
 
-      expect(transport.disconnect).toHaveBeenCalled();
-      expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith(
-        "disconnected",
-      );
+    const peer = latestPeerConnection!;
+    peer.dataChannel.readyState = "open";
+    peer.dataChannel.onopen?.(new Event("open"));
+    peer.ontrack?.({
+      streams: [new MockMediaStream() as unknown as MediaStream],
+    } as unknown as RTCTrackEvent);
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
     });
 
-    it("closes audio context", async () => {
-      const { client } = createClient();
-      await connectClient(client);
-
-      const ctx = (client as unknown as Record<string, unknown>)[
-        "audioContext"
-      ] as MockAudioContext;
-
-      client.disconnect();
-
-      expect(ctx.close).toHaveBeenCalled();
+    expect(JSON.parse(peer.dataChannel.sent[0])).toEqual({
+      type: "init",
+      conversation_id: "conversation-1",
+      session_name: "browser",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: true,
     });
 
-    it("rejects pending resets", async () => {
-      const { client } = createClient();
-      await connectClient(client);
-
-      const resetPromise = client.reset({
-        langIn: "en-US",
-        langOut: "es-ES",
-      });
-
-      client.disconnect();
-
-      await expect(resetPromise).rejects.toThrow("Disconnected");
-    });
-  });
-
-  describe("reset", () => {
-    it("throws when not connected", async () => {
-      const { client } = createClient();
-
-      await expect(
-        client.reset({ langIn: "en-US", langOut: "es-ES" }),
-      ).rejects.toThrow("Not connected. Call connect() first.");
+    expect(
+      transport.configure({
+        requestId: "cfg-1",
+        languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+        glossary: [{ Sanas: "Sanas" }],
+        features: ["language_identification"],
+      }),
+    ).toBe("cfg-1");
+    expect(JSON.parse(peer.dataChannel.sent[1])).toEqual({
+      type: "configure",
+      request_id: "cfg-1",
+      language_routes: [{ lang_in: "en-US", lang_out: "es-ES" }],
+      glossary: [{ terms: { Sanas: "Sanas" } }],
+      features: ["language_identification"],
     });
 
-    it("calls transport.configure and resolves on ready", async () => {
-      const { client } = createClient();
-      const { transport } = await connectClient(client);
-
-      const resetPromise = client.reset({
-        langIn: "en-US",
-        langOut: "es-ES",
-        voiceId: "voice-1",
-        glossary: ["Sanas"],
-      });
-
-      expect(transport.configure).toHaveBeenCalledWith({
-        langIn: "en-US",
-        langOut: "es-ES",
-        voiceId: "voice-1",
-        glossary: ["Sanas"],
-      });
-
-      transport.callbacks!.onMessage({
-        type: "ready",
-        ready: { id: "reset-id-1" },
-      });
-
-      await expect(resetPromise).resolves.toBeUndefined();
-
-      client.disconnect();
+    peer.dataChannel.onmessage?.({
+      data: JSON.stringify({ type: "configured", request_id: "cfg-1" }),
+    } as MessageEvent);
+    expect(callbacks.onMessage).toHaveBeenCalledWith({
+      type: "configured",
+      request_id: "cfg-1",
     });
   });
+});
 
-  describe("message routing", () => {
-    it("routes transcription messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      expect(callbacks.onUtterance).toHaveBeenCalledTimes(1);
-      const [utteranceDisplay, index] = (callbacks.onUtterance as jest.Mock)
-        .mock.calls[0];
-      expect(index).toBe(0);
-      expect(utteranceDisplay.transcription.complete).toEqual([
-        { word: "hello", start: 0, end: 1 },
-      ]);
-
-      client.disconnect();
-    });
-
-    it("routes translation messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      transport.callbacks!.onMessage({
-        type: "translation",
-        translation: {
-          complete: [{ word: "hola", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      expect(callbacks.onUtterance).toHaveBeenCalledTimes(2);
-      const lastCall = (callbacks.onUtterance as jest.Mock).mock.calls[1];
-      expect(lastCall[0].translation.complete).toEqual([
-        { word: "hola", start: 0, end: 1 },
-      ]);
-
-      client.disconnect();
-    });
-
-    it("routes language identification messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "languages",
-        languages: {
-          languages: [{ short_code: "en", name: "English", probability: 0.9 }],
-        },
-      });
-
-      expect(callbacks.onLanguages).toHaveBeenCalledWith([
-        { shortCode: "en", name: "English", probability: 0.9 },
-      ]);
-
-      client.disconnect();
-    });
-
-    it("routes error messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onError("something went wrong");
-
-      expect(callbacks.onError).toHaveBeenCalledWith("something went wrong");
-
-      client.disconnect();
-    });
-
-    it("routes connection state changes to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      (callbacks.onConnectionStateChange as jest.Mock).mockClear();
-
-      transport.callbacks!.onConnectionStateChange("disconnected");
-
-      expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith(
-        "disconnected",
-      );
-
-      client.disconnect();
-    });
-
-    it("routes speech_languages messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "speech_languages",
-        speech_languages: {
-          lang_in: "en-US",
-          lang_out: "es-ES",
-        },
-      });
-
-      expect(callbacks.onSpeechLanguages).toHaveBeenCalledWith(
-        "en-US",
-        "es-ES",
-      );
-
-      client.disconnect();
-    });
-
-    it("routes speech_stop messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "speech_stop",
-        speech_stop: {},
-      });
-
-      expect(callbacks.onSpeechStop).toHaveBeenCalledTimes(1);
-
-      client.disconnect();
-    });
-
-    it("routes ready messages to callbacks", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "ready",
-        ready: { id: "r1" },
-      });
-
-      expect(callbacks.onReady).toHaveBeenCalledWith("r1");
-
-      client.disconnect();
-    });
+describe("WebSocketTransport", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    installBrowserMocks();
+    latestWebSocket = null;
+    latestWorkletNode = null;
   });
 
-  describe("onMessage (StreamMessage relay)", () => {
-    it("fires onMessage for lt messages", async () => {
-      const onMessage = jest.fn();
-      const { client } = createClient({ onMessage });
-      const { transport } = await connectClient(client);
+  it("uses /v3/stream init/configure/flush and binary audio frames", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+      onAudioData: jest.fn(),
+    };
+    const transport = new WebSocketTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: "conversation-1",
+        sessionName: "browser",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com" },
+      callbacks,
+    );
 
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
+    await tick();
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
 
-      expect(onMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "lt",
-          lt: expect.objectContaining({ type: "transcription" }),
-        }),
-      );
-
-      client.disconnect();
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+    expect(ws.url).toBe("wss://lt.test.com/v3/stream?api_key=api-key");
+    expect(JSON.parse(ws.sent[0] as string)).toEqual({
+      type: "init",
+      conversation_id: "conversation-1",
+      session_name: "browser",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: false,
     });
 
-    it("fires onMessage for transport state changes", async () => {
-      const onMessage = jest.fn();
-      const { client } = createClient({ onMessage });
-
-      await connectClient(client);
-
-      expect(onMessage).toHaveBeenCalledWith({
-        type: "transport",
-        state: "connecting",
-      });
-      expect(onMessage).toHaveBeenCalledWith({
-        type: "transport",
-        state: "connected",
-      });
-
-      client.disconnect();
+    expect(
+      transport.configure({
+        requestId: "cfg-1",
+        languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+      }),
+    ).toBe("cfg-1");
+    expect(JSON.parse(ws.sent[1] as string)).toEqual({
+      type: "configure",
+      request_id: "cfg-1",
+      language_routes: [{ lang_in: "en-US", lang_out: "es-ES" }],
     });
 
-    it("fires onMessage for error messages", async () => {
-      const onMessage = jest.fn();
-      const { client } = createClient({ onMessage });
-      const { transport } = await connectClient(client);
+    expect(transport.flush()).toEqual(expect.any(String));
+    expect(JSON.parse(ws.sent[2] as string).type).toBe("flush");
 
-      transport.callbacks!.onError("test error");
+    latestWorkletNode?.port.onmessage?.({
+      data: new Float32Array([1, -1]),
+    } as MessageEvent);
+    expect(Object.prototype.toString.call(ws.sent[3])).toBe("[object ArrayBuffer]");
 
-      expect(onMessage).toHaveBeenCalledWith({
-        type: "error",
-        message: "test error",
-      });
-
-      client.disconnect();
-    });
-  });
-
-  describe("fetchLanguages (static)", () => {
-    it("fetches and maps languages from the server", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          success: true,
-          data: {
-            languages: [
-              {
-                long_code: "en-US",
-                short_code: "en",
-                name: "English",
-                support: "stable",
-              },
-              {
-                long_code: "es-ES",
-                short_code: "es",
-                name: "Spanish",
-                support: "stable",
-              },
-            ],
-          },
-        }),
-      });
-
-      const languages = await SanasTranslationClient.fetchLanguages({
-        apiKey: "test-key",
-        endpoint: "https://lt.test.com",
-      });
-
-      expect(languages).toEqual([
-        {
-          longCode: "en-US",
-          shortCode: "en",
-          name: "English",
-          support: "stable",
-        },
-        {
-          longCode: "es-ES",
-          shortCode: "es",
-          name: "Spanish",
-          support: "stable",
-        },
-      ]);
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "configured", request_id: "cfg-1" }),
+    } as MessageEvent);
+    expect(callbacks.onMessage).toHaveBeenCalledWith({
+      type: "configured",
+      request_id: "cfg-1",
     });
 
-    it("sends X-API-Key header when apiKey is set", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({ success: true, data: { languages: [] } }),
-      });
-
-      await SanasTranslationClient.fetchLanguages({
-        apiKey: "my-key",
-        endpoint: "https://lt.test.com",
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://lt.test.com/v2/languages/list",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "X-API-Key": "my-key",
-          }),
-        }),
-      );
-    });
-
-    it("sends Authorization header when accessToken is set", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({ success: true, data: { languages: [] } }),
-      });
-
-      await SanasTranslationClient.fetchLanguages({
-        accessToken: "my-token",
-        endpoint: "https://lt.test.com",
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer my-token",
-          }),
-        }),
-      );
-    });
-
-    it("throws when no credentials provided", async () => {
-      await expect(
-        SanasTranslationClient.fetchLanguages({
-          endpoint: "https://lt.test.com",
-        }),
-      ).rejects.toThrow("Missing credentials");
-    });
-
-    it("sends x-lang header when lang option is provided", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({ success: true, data: { languages: [] } }),
-      });
-
-      await SanasTranslationClient.fetchLanguages(
-        { apiKey: "test-key", endpoint: "https://lt.test.com" },
-        { lang: "es-ES" },
-      );
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            "x-lang": "es-ES",
-          }),
-        }),
-      );
-    });
-
-    it("throws on 403 (authentication failure)", async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 403,
-        text: async () => "Forbidden",
-      });
-
-      await expect(
-        SanasTranslationClient.fetchLanguages({
-          apiKey: "test-key",
-          endpoint: "https://lt.test.com",
-        }),
-      ).rejects.toThrow("Authentication failed.");
-    });
-
-    it("throws on other HTTP errors", async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: async () => "Internal Server Error",
-      });
-
-      await expect(
-        SanasTranslationClient.fetchLanguages({
-          apiKey: "test-key",
-          endpoint: "https://lt.test.com",
-        }),
-      ).rejects.toThrow("Failed to fetch languages: 500");
-    });
-  });
-
-  describe("speech delimiter scheduling", () => {
-    it("schedules a speech delimiter via AudioBufferSourceNode", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      transport.callbacks!.onMessage({
-        type: "speech_delimiter",
-        speech_delimiter: {
-          time: 0.5,
-          transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
-          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-        },
-      });
-
-      expect(createdBufferSourceNodes).toHaveLength(1);
-      const node = createdBufferSourceNodes[0];
-      expect(node.start).toHaveBeenCalledWith(0.5);
-      expect(node.connect).toHaveBeenCalled();
-
-      await flush();
-
-      expect(callbacks.onUtterance).toHaveBeenCalled();
-      const lastCall = (callbacks.onUtterance as jest.Mock).mock.calls.at(-1);
-      expect(lastCall[0].transcription.spokenText).toBe("hello");
-
-      client.disconnect();
-    });
-
-    it("delivers speech delimiter to translation state when AudioBuffer ends", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      (callbacks.onUtterance as jest.Mock).mockClear();
-
-      transport.callbacks!.onMessage({
-        type: "speech_delimiter",
-        speech_delimiter: {
-          time: 0.5,
-          transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
-          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-        },
-      });
-
-      expect(callbacks.onUtterance).not.toHaveBeenCalled();
-
-      await flush();
-
-      expect(callbacks.onUtterance).toHaveBeenCalled();
-
-      client.disconnect();
-    });
-
-    it("cancels pending delimiters on disconnect", async () => {
-      const { client } = createClient();
-      const { transport } = await connectClient(client);
-
-      const originalStart = MockAudioBufferSourceNode.prototype.start;
-      MockAudioBufferSourceNode.prototype.start = jest.fn();
-
-      transport.callbacks!.onMessage({
-        type: "speech_delimiter",
-        speech_delimiter: {
-          time: 10.0,
-          transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
-          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-        },
-      });
-
-      const node = createdBufferSourceNodes[0];
-      expect(node).toBeDefined();
-
-      client.disconnect();
-
-      expect(node.onended).toBeNull();
-      expect(node.disconnect).toHaveBeenCalled();
-
-      MockAudioBufferSourceNode.prototype.start = originalStart;
-    });
-
-    it("falls back to immediate delivery when no audio context", async () => {
-      const { client, callbacks } = createClient();
-      const { transport } = await connectClient(client);
-
-      (client as unknown as Record<string, unknown>)["audioContext"] = null;
-
-      transport.callbacks!.onMessage({
-        type: "transcription",
-        transcription: {
-          complete: [{ word: "hello", start: 0, end: 1 }],
-          partial: [],
-          utterance_idx: 0,
-        },
-      });
-
-      (callbacks.onUtterance as jest.Mock).mockClear();
-
-      transport.callbacks!.onMessage({
-        type: "speech_delimiter",
-        speech_delimiter: {
-          time: 0.5,
-          transcription: { utterance_idx: 0, word_idx: 1, char_idx: 0 },
-          translation: { utterance_idx: 0, word_idx: 0, char_idx: 0 },
-        },
-      });
-
-      expect(createdBufferSourceNodes).toHaveLength(0);
-      expect(callbacks.onUtterance).toHaveBeenCalled();
-
-      client.disconnect();
-    });
+    ws.onmessage?.({ data: new Int16Array([1, 2]).buffer } as MessageEvent);
+    expect(callbacks.onAudioData).toHaveBeenCalledWith(
+      new Int16Array([1, 2]),
+      16000,
+    );
   });
 });

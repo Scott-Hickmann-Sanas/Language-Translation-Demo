@@ -4,6 +4,7 @@ export const Word = z.object({
   word: z.string(),
   start: z.number(),
   end: z.number(),
+  probability: z.number().nullable().optional(),
 });
 export type Word = z.infer<typeof Word>;
 

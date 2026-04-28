@@ -1,14 +1,15 @@
+import { float32ToInt16 } from "./audio";
 import {
   ConnectionState,
   ConnectOptions,
   ConnectResult,
-  LTMessage,
   ResetOptions,
   SanasTranslationClientOptions,
+  StreamV3ClientMessage,
+  StreamV3ServerMessage,
   Transport,
   TransportCallbacks,
 } from "./types";
-import { float32ToInt16 } from "./audio";
 
 function webrtcToConnectionState(
   // eslint-disable-next-line no-undef
@@ -27,10 +28,43 @@ function webrtcToConnectionState(
   }
 }
 
-let resetIdCounter = 0;
-
 const DEFAULT_INPUT_SAMPLE_RATE = 16000;
 const DEFAULT_OUTPUT_SAMPLE_RATE = 16000;
+const ICE_GATHER_TIMEOUT_MS = 1500;
+
+function createRequestId(prefix: string): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function waitForIceGatheringComplete(
+  peer: RTCPeerConnection,
+  timeoutMs: number,
+): Promise<void> {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const previousHandler = peer.onicegatheringstatechange;
+    const timeout = setTimeout(done, timeoutMs);
+
+    function done() {
+      clearTimeout(timeout);
+      peer.onicegatheringstatechange = previousHandler;
+      resolve();
+    }
+
+    peer.onicegatheringstatechange = (event) => {
+      previousHandler?.call(peer, event);
+      if (peer.iceGatheringState === "complete") {
+        done();
+      }
+    };
+  });
+}
 
 export class WebRTCTransport implements Transport {
   private peerConnection: RTCPeerConnection | null = null;
@@ -43,6 +77,7 @@ export class WebRTCTransport implements Transport {
   private connectOptions: ConnectOptions | null = null;
   private captureContext: AudioContext | null = null;
   private captureProcessor: ScriptProcessorNode | null = null;
+  private conversationId: string | null = null;
 
   get sessionId(): string | null {
     return this._sessionId;
@@ -55,12 +90,14 @@ export class WebRTCTransport implements Transport {
   ): Promise<ConnectResult> {
     this.callbacks = callbacks;
     this.connectOptions = options;
+    this.conversationId =
+      options.conversationId ?? createRequestId("conversation");
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
 
     // Create RTCPeerConnection
-    const peer = new RTCPeerConnection();
+    const peer = new RTCPeerConnection({ bundlePolicy: "max-bundle" });
     this.peerConnection = peer;
 
     // Create data channel
@@ -68,6 +105,7 @@ export class WebRTCTransport implements Transport {
     this.dataChannel = dc;
 
     dc.onopen = () => {
+      this.sendInit();
       for (const msg of this.messageQueue) {
         dc.send(msg);
       }
@@ -84,7 +122,7 @@ export class WebRTCTransport implements Transport {
 
     dc.onmessage = (event: MessageEvent) => {
       try {
-        const message = LTMessage.parse(JSON.parse(event.data));
+        const message = StreamV3ServerMessage.parse(JSON.parse(event.data));
         callbacks.onMessage(message);
       } catch (e) {
         console.error("Failed to parse message from data channel:", e);
@@ -164,21 +202,25 @@ export class WebRTCTransport implements Transport {
   }
 
   configure(options: ResetOptions): string {
-    const id = `reset-${++resetIdCounter}`;
-    const message = {
-      type: "reset" as const,
-      reset: {
-        id,
-        lang_in: options.langIn,
-        lang_out: options.langOut,
-        voice_id: options.voiceId,
-        glossary: options.glossary,
-        clear_history: options.clearHistory,
-        can_lang_swap: options.canLangSwap,
-        detect_languages: options.detectLanguages,
-      },
+    const id = options.requestId ?? createRequestId("configure");
+    const message: StreamV3ClientMessage = {
+      type: "configure",
+      language_routes: options.languageRoutes.map((route) => ({
+        lang_in: route.langIn,
+        lang_out: route.langOut,
+      })),
+      features: options.features,
+      voice_id: options.voiceId,
+      glossary: options.glossary?.map((terms) => ({ terms })),
+      request_id: id,
     };
     this.sendMessage(message);
+    return id;
+  }
+
+  flush(): string {
+    const id = createRequestId("flush");
+    this.sendMessage({ type: "flush", request_id: id });
     return id;
   }
 
@@ -205,6 +247,7 @@ export class WebRTCTransport implements Transport {
     this.messageQueue = [];
     this.callbacks = null;
     this.connectOptions = null;
+    this.conversationId = null;
   }
 
   drainAudio(): Promise<void> {
@@ -217,7 +260,22 @@ export class WebRTCTransport implements Transport {
     }
   }
 
-  private sendMessage(message: LTMessage): void {
+  private sendInit(): void {
+    const options = this.connectOptions;
+    if (!options || !this.conversationId) return;
+
+    this.sendMessage({
+      type: "init",
+      conversation_id: this.conversationId,
+      session_name: options.sessionName ?? "",
+      input_sample_rate: options.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
+      output_sample_rate:
+        options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE,
+      realtime_playback: options.realtimePlayback ?? true,
+    });
+  }
+
+  private sendMessage(message: StreamV3ClientMessage): void {
     const serialized = JSON.stringify(message);
     if (this.dataChannel && this.dataChannel.readyState === "open") {
       this.dataChannel.send(serialized);
@@ -235,6 +293,7 @@ export class WebRTCTransport implements Transport {
       offerToReceiveVideo: false,
     });
     await peer.setLocalDescription(offer);
+    await waitForIceGatheringComplete(peer, ICE_GATHER_TIMEOUT_MS);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -248,17 +307,13 @@ export class WebRTCTransport implements Transport {
       throw new Error("Missing credentials: provide apiKey or accessToken.");
     }
 
-    const options = this.connectOptions;
     const payload = {
-      ...offer,
-      conversation_id: options?.conversationId ?? null,
-      name: options?.userName ?? null,
-      input_sample_rate: options?.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE,
-      output_sample_rate:
-        options?.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE,
+      type: "offer",
+      sdp: peer.localDescription?.sdp ?? offer.sdp,
     };
 
-    const response = await fetch(`${clientOptions.endpoint}/session`, {
+    const endpoint = clientOptions.endpoint.replace(/\/$/, "");
+    const response = await fetch(`${endpoint}/v3/webrtc`, {
       method: "POST",
       body: JSON.stringify(payload),
       headers,
@@ -286,6 +341,6 @@ export class WebRTCTransport implements Transport {
     const answer = await response.json();
     this._sessionId =
       typeof answer.session_id === "string" ? answer.session_id : null;
-    await peer.setRemoteDescription(answer);
+    await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
   }
 }

@@ -48,8 +48,10 @@ const audioElement = document.createElement("audio");
 audioElement.srcObject = audio;
 audioElement.autoplay = true;
 
-// 5. Configure translation
-await client.reset({ langIn: "en-US", langOut: "es-ES" });
+// 5. Configure translation with Stream v3 language routes
+await client.reset({
+  languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+});
 
 // 6. When done
 client.disconnect();
@@ -60,9 +62,9 @@ track.stop();
 
 The library is split into three main pieces:
 
-- **`TranslationState`** — Standalone state container that processes `StreamMessage`s and fires callbacks. Consumers create one instance per participant (local + remote) to display both sides of a call.
-- **`SanasTranslationClient`** — Manages the connection lifecycle, wraps transport events into `StreamMessage`s, and routes them to a `TranslationState`. Exposes an `onMessage` hook for relaying messages to other participants.
-- **Transports** (`WebRTCTransport`, `WebSocketTransport`) — Handle the network protocol. The consumer provides an audio track; the transport sends it to the server and delivers translated audio back.
+- **`TranslationState`** - Standalone state container that processes `StreamMessage`s and fires callbacks. Consumers create one instance per participant (local + remote) to display both sides of a call.
+- **`SanasTranslationClient`** - Manages the connection lifecycle, wraps transport events into `StreamMessage`s, and routes them to a `TranslationState`. Exposes an `onMessage` hook for relaying messages to other participants.
+- **Transports** (`WebRTCTransport`, `WebSocketTransport`) - Handle the network protocol. The consumer provides an audio track; the transport sends it to the server and delivers translated audio back.
 
 ### Two-Party Call Pattern
 
@@ -96,32 +98,35 @@ Manages transcription, translation, connection state, and language detection sta
 
 #### Callbacks
 
-| Callback                 | Signature                                                | Description                                 |
-| ------------------------ | -------------------------------------------------------- | ------------------------------------------- |
-| `onUtterance`            | `(utterance: UtteranceDisplay, index: number) => void`   | Utterance created or updated                |
-| `onLanguages`            | `(languages: IdentifiedLanguageDisplay[]) => void`       | Detected languages updated                  |
-| `onReady`                | `(id: string \| null) => void`                           | Server confirmed ready after reset          |
-| `onSpeechLanguages`      | `(langIn: string, langOut: string) => void`              | Active speech language pair changed          |
-| `onSpeechStop`           | `() => void`                                             | Speech stopped                              |
-| `onConnectionStateChange`| `(state: ConnectionState) => void`                       | Connection state changed                    |
-| `onError`                | `(error: string) => void`                                | Error occurred                              |
+| Callback                  | Signature                                                         | Description                             |
+| ------------------------- | ----------------------------------------------------------------- | --------------------------------------- |
+| `onUtterance`             | `(utterance: UtteranceDisplay, index: number) => void`            | Utterance created or updated            |
+| `onLanguages`             | `(languages: IdentifiedLanguageDisplay[]) => void`                | Detected languages updated              |
+| `onConfigured`            | `(requestId: string \| null) => void`                             | Server confirmed a v3 configure request |
+| `onLanguageRoute`         | `(langIn: string, langOut: string, utteranceIdx: number) => void` | Active v3 language route changed        |
+| `onOutputSpeechEnded`     | `(utteranceIdx: number, outputTime: number) => void`              | Output speech ended                     |
+| `onTranslationEnded`      | `(utteranceIdx: number) => void`                                  | Translation ended                       |
+| `onFlushed`               | `(requestId: string \| null) => void`                             | Server confirmed a v3 flush request     |
+| `onConnectionStateChange` | `(state: ConnectionState) => void`                                | Connection state changed                |
+| `onError`                 | `(error: string) => void`                                         | Error occurred                          |
 
 #### Methods
 
-| Method                        | Returns                  | Description                                    |
-| ----------------------------- | ------------------------ | ---------------------------------------------- |
-| `handleMessage(msg)`          | `void`                   | Process a `StreamMessage` (from client or relay)|
-| `waitForReady(resetId)`       | `Promise<void>`          | Resolves when a matching ready message arrives  |
-| `destroy()`                   | `void`                   | Rejects all pending ready promises              |
-| `getState()`                  | `TranslationClientState` | Full snapshot of utterances and languages        |
-| `getUtteranceDisplay(index)`  | `UtteranceDisplay`       | Display data for a single utterance             |
+| Method                         | Returns                  | Description                                         |
+| ------------------------------ | ------------------------ | --------------------------------------------------- |
+| `handleMessage(msg)`           | `void`                   | Process a `StreamMessage` (from client or relay)    |
+| `waitForConfigured(requestId)` | `Promise<void>`          | Resolves when a matching configured message arrives |
+| `waitForFlushed(requestId)`    | `Promise<void>`          | Resolves when a matching flushed message arrives    |
+| `destroy()`                    | `void`                   | Rejects all pending configure/flush promises        |
+| `getState()`                   | `TranslationClientState` | Full snapshot of utterances and languages           |
+| `getUtteranceDisplay(index)`   | `UtteranceDisplay`       | Display data for a single utterance                 |
 
 #### Properties
 
-| Property              | Type                         | Description                  |
-| --------------------- | ---------------------------- | ---------------------------- |
-| `connectionState`     | `ConnectionState`            | Current connection state     |
-| `identifiedLanguages` | `IdentifiedLanguageDisplay[]`| Last detected languages      |
+| Property              | Type                          | Description              |
+| --------------------- | ----------------------------- | ------------------------ |
+| `connectionState`     | `ConnectionState`             | Current connection state |
+| `identifiedLanguages` | `IdentifiedLanguageDisplay[]` | Last detected languages  |
 
 ### `SanasTranslationClient`
 
@@ -129,28 +134,29 @@ Manages transcription, translation, connection state, and language detection sta
 const client = new SanasTranslationClient(translationState, options);
 ```
 
-| Option        | Type                              | Description                                           |
-| ------------- | --------------------------------- | ----------------------------------------------------- |
-| `apiKey`      | `string?`                         | API key (use this or `accessToken`)                   |
-| `accessToken` | `string?`                         | OAuth token (use this or `apiKey`)                    |
-| `endpoint`    | `string`                          | Server URL (e.g. `https://api.sanaslt.com`)           |
-| `onMessage`   | `(message: StreamMessage) => void`| Fires for every message — use this for relay          |
+| Option        | Type                                                | Description                                                                                                           |
+| ------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `apiKey`      | `string?`                                           | API key (use this or `accessToken`)                                                                                   |
+| `accessToken` | `string?`                                           | OAuth token (use this or `apiKey`)                                                                                    |
+| `endpoint`    | `string`                                            | Server URL (e.g. `https://api.sanaslt.com`)                                                                           |
+| `onMessage`   | `(message: StreamMessage) => void`                  | Fires for every message; use this for relay                                                                           |
 | `onAudioData` | `(samples: Int16Array, sampleRate: number) => void` | Fires with raw output audio (Int16 PCM) as received from the server. Works with both WebRTC and WebSocket transports. |
 
 #### `client.connect(options): Promise<ConnectResult>`
 
 Connects to the translation server through the given transport.
 
-| Option            | Type                | Required | Description                                    |
-| ----------------- | ------------------- | -------- | ---------------------------------------------- |
-| `transport`       | `Transport`         | Yes      | `WebRTCTransport` or `WebSocketTransport`      |
-| `audioTrack`      | `MediaStreamTrack`  | Yes      | Audio track to send (from mic, file, etc.)     |
-| `conversationId`  | `string?`           |          | Conversation ID to join                        |
-| `userName`        | `string?`           |          | Display name for this participant              |
-| `inputSampleRate` | `SampleRate?`       |          | Input sample rate in Hz (default: 16000)       |
-| `outputSampleRate`| `SampleRate?`       |          | Output sample rate in Hz (default: 16000)      |
+| Option             | Type               | Required | Description                                   |
+| ------------------ | ------------------ | -------- | --------------------------------------------- |
+| `transport`        | `Transport`        | Yes      | `WebRTCTransport` or `WebSocketTransport`     |
+| `audioTrack`       | `MediaStreamTrack` | Yes      | Audio track to send (from mic, file, etc.)    |
+| `conversationId`   | `string?`          |          | Conversation ID to join                       |
+| `sessionName`      | `string?`          |          | Session name for this participant             |
+| `inputSampleRate`  | `SampleRate?`      |          | Input sample rate in Hz (default: 16000)      |
+| `outputSampleRate` | `SampleRate?`      |          | Output sample rate in Hz (default: 16000)     |
+| `realtimePlayback` | `boolean?`         |          | Request realtime playback from the v3 service |
 
-Returns `{ audio: MediaStream }` — the translated audio stream.
+Returns `{ audio: MediaStream }` - the translated audio stream.
 
 #### `client.drainAudio(): Promise<void>`
 
@@ -172,17 +178,19 @@ Closes the connection, destroys the translation state's pending promises, and cl
 
 #### `client.reset(options): Promise<void>`
 
-Configures the translation session. Resolves when the server confirms it is ready.
+Configures the translation session. Sends a Stream v3 `configure` message and resolves when the server returns a matching `configured` message.
 
-| Option            | Type       | Description                              |
-| ----------------- | ---------- | ---------------------------------------- |
-| `langIn`          | `string`   | Source language code (e.g. `"en-US"`)    |
-| `langOut`         | `string`   | Target language code (e.g. `"es-ES"`)    |
-| `voiceId`         | `string?`  | Voice ID for translated audio            |
-| `glossary`        | `string[]?`| Terms to preserve during translation     |
-| `clearHistory`    | `boolean?` | Clear conversation history               |
-| `canLangSwap`     | `boolean?` | Allow automatic language swapping        |
-| `detectLanguages` | `boolean?` | Enable language detection                |
+| Option           | Type                                    | Description                             |
+| ---------------- | --------------------------------------- | --------------------------------------- |
+| `languageRoutes` | `{ langIn: string; langOut: string }[]` | Source and target language routes       |
+| `voiceId`        | `string?`                               | Voice ID for translated audio           |
+| `glossary`       | `Array<Record<string, string>>?`        | v3 glossary entries                     |
+| `features`       | `string[]?`                             | Optional v3 feature flags               |
+| `requestId`      | `string?`                               | Optional caller-supplied correlation ID |
+
+#### `client.flush(): Promise<void>`
+
+Sends a Stream v3 `flush` message and resolves when the server returns a matching `flushed` message.
 
 #### `SanasTranslationClient.fetchLanguages(credentials, options?): Promise<Language[]>`
 
@@ -197,13 +205,28 @@ const languages = await SanasTranslationClient.fetchLanguages({
 
 ### `StreamMessage`
 
-A Zod-validated discriminated union representing all messages in the client stream. Three sub-types:
+A Zod-validated union representing client-side transport state plus Stream v3 server messages. Server messages are app-facing directly, without legacy `LTMessage` wrappers.
 
-| Type        | Shape                                    | Description                    |
-| ----------- | ---------------------------------------- | ------------------------------ |
-| `lt`        | `{ type: "lt", lt: LTMessage }`          | Server LT message (transcription, translation, ready, etc.) |
-| `transport` | `{ type: "transport", state: ConnectionState }` | Connection state change |
-| `error`     | `{ type: "error", message: string }`     | Error message                  |
+| Type                            | Shape                                           | Description                    |
+| ------------------------------- | ----------------------------------------------- | ------------------------------ |
+| `transport`                     | `{ type: "transport", state: ConnectionState }` | Connection state change        |
+| `configured`                    | `{ type: "configured", request_id? }`           | Configure request acknowledged |
+| `transcription` / `translation` | v3 text word payloads                           | Utterance text updates         |
+| `output_text_boundary`          | v3 boundary payload with `output_time`          | Output audio/text progress     |
+| `language_route`                | v3 language route payload                       | Active route update            |
+| `flushed`                       | `{ type: "flushed", request_id? }`              | Flush request acknowledged     |
+| `error`                         | v3 error payload                                | Server or client error         |
+
+## Breaking v3 Message Changes
+
+The JS client now exposes Stream v3 messages directly:
+
+| Legacy             | Stream v3              |
+| ------------------ | ---------------------- |
+| `ready`            | `configured`           |
+| `speech_delimiter` | `output_text_boundary` |
+| `speech_languages` | `language_route`       |
+| `languages`        | `identified_languages` |
 
 ### `float32ToInt16(float32: Float32Array): Int16Array`
 
@@ -217,19 +240,22 @@ Helper to acquire a microphone audio track. The caller owns the returned track a
 const track = await getMicrophoneTrack({ sampleRate: 16000 });
 ```
 
-| Option        | Type                    | Description                              |
-| ------------- | ----------------------- | ---------------------------------------- |
-| `sampleRate`  | `number?`               | Desired sample rate (default: 16000)     |
-| `constraints` | `MediaTrackConstraints?`| Custom constraints (overrides defaults)  |
+| Option        | Type                     | Description                             |
+| ------------- | ------------------------ | --------------------------------------- |
+| `sampleRate`  | `number?`                | Desired sample rate (default: 16000)    |
+| `constraints` | `MediaTrackConstraints?` | Custom constraints (overrides defaults) |
 
 ### Transports
 
 Both transports implement the `Transport` interface. Choose one when connecting:
 
 ```typescript
-import { WebRTCTransport, WebSocketTransport } from "@sanas-ai/language-translation";
+import {
+  WebRTCTransport,
+  WebSocketTransport,
+} from "@sanas-ai/language-translation";
 
-const transport = new WebRTCTransport();   // or new WebSocketTransport()
+const transport = new WebRTCTransport(); // or new WebSocketTransport()
 await client.connect({ transport, audioTrack: track });
 
 // Mute/unmute

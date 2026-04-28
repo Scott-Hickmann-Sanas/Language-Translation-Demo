@@ -4,10 +4,10 @@ import {
   ConnectResult,
   FetchLanguagesOptions,
   Language,
-  LTMessage,
   ResetOptions,
   SanasTranslationClientOptions,
   StreamMessage,
+  StreamV3OutputTextBoundaryMessage,
   Transport,
 } from "./types";
 
@@ -19,7 +19,8 @@ export class SanasTranslationClient {
   private _isAudioEnabled = true;
 
   private audioContext: AudioContext | null = null;
-  private audioStreamStartTime = 0;
+  private outputTimelineAnchorTime: number | null = null;
+  private pendingOutputTextBoundaries: StreamV3OutputTextBoundaryMessage[] = [];
   private scheduledDelimiterNodes: AudioBufferSourceNode[] = [];
 
   constructor(
@@ -48,18 +49,19 @@ export class SanasTranslationClient {
 
     try {
       const result = await transport.connect(options, this.options, {
-        onMessage: (msg: LTMessage) =>
-          this.handleIncomingMessage({ type: "lt", lt: msg }),
+        onMessage: (msg) => this.handleIncomingMessage(msg),
         onError: (error: string) =>
-          this.handleIncomingMessage({ type: "error", message: error }),
+          this.handleIncomingMessage({
+            type: "error",
+            message: error,
+            code: "CLIENT_ERROR",
+          }),
         onConnectionStateChange: (state) =>
           this.handleIncomingMessage({ type: "transport", state }),
         onAudioData: this.options.onAudioData,
       });
 
-      this.audioStreamStartTime = ctx.currentTime;
-
-      // Keep the AudioContext clock running (for speech_delimiter scheduling)
+      // Keep the AudioContext clock running (for output_text_boundary scheduling)
       // without consuming the audio stream, so callers can record/play it.
       const osc = ctx.createOscillator();
       const silentGain = ctx.createGain();
@@ -167,32 +169,62 @@ export class SanasTranslationClient {
       throw new Error("Not connected. Call connect() first.");
     }
 
-    const resetId = this.transport.configure(options);
-    await this.translationState.waitForReady(resetId);
+    const requestId = this.transport.configure(options);
+    if (requestId !== null) {
+      await this.translationState.waitForConfigured(requestId);
+    }
+  }
+
+  async flush(): Promise<void> {
+    if (!this.transport) {
+      throw new Error("Not connected. Call connect() first.");
+    }
+
+    const requestId = this.transport.flush();
+    if (requestId !== null) {
+      await this.translationState.waitForFlushed(requestId);
+    }
   }
 
   // --- Internal ---
 
   private handleIncomingMessage(message: StreamMessage): void {
     this.options.onMessage?.(message);
-    if (message.type === "lt" && message.lt.type === "speech_delimiter") {
-      this.scheduleSpeechDelimiter(message.lt);
-    } else {
-      this.translationState.handleMessage(message);
+
+    switch (message.type) {
+      case "configured":
+        this.resetOutputTimeline();
+        this.translationState.handleMessage(message);
+        break;
+      case "output_speech_started":
+        this.anchorOutputTimeline(message.output_time);
+        this.translationState.handleMessage(message);
+        this.schedulePendingOutputTextBoundaries();
+        break;
+      case "output_text_boundary":
+        this.scheduleOutputTextBoundary(message);
+        break;
+      default:
+        this.translationState.handleMessage(message);
+        break;
     }
   }
 
-  private scheduleSpeechDelimiter(message: LTMessage): void {
+  private scheduleOutputTextBoundary(
+    message: StreamV3OutputTextBoundaryMessage,
+  ): void {
     if (!this.audioContext) {
-      this.translationState.handleMessage({ type: "lt", lt: message });
+      this.translationState.handleMessage(message);
       return;
     }
 
-    if (message.type !== "speech_delimiter") return;
+    if (this.outputTimelineAnchorTime === null) {
+      this.pendingOutputTextBoundaries.push(message);
+      return;
+    }
 
     const ctx = this.audioContext;
-    const scheduledTime =
-      this.audioStreamStartTime + message.speech_delimiter.time;
+    const scheduledTime = this.outputTimelineAnchorTime + message.output_time;
 
     const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
     const source = ctx.createBufferSource();
@@ -204,11 +236,30 @@ export class SanasTranslationClient {
       if (idx !== -1) {
         this.scheduledDelimiterNodes.splice(idx, 1);
       }
-      this.translationState.handleMessage({ type: "lt", lt: message });
+      this.translationState.handleMessage(message);
     };
 
-    source.start(scheduledTime);
+    source.start(Math.max(ctx.currentTime, scheduledTime));
     this.scheduledDelimiterNodes.push(source);
+  }
+
+  private anchorOutputTimeline(outputTime: number): void {
+    if (!this.audioContext) return;
+    this.outputTimelineAnchorTime = this.audioContext.currentTime - outputTime;
+  }
+
+  private schedulePendingOutputTextBoundaries(): void {
+    const pending = this.pendingOutputTextBoundaries;
+    this.pendingOutputTextBoundaries = [];
+    for (const message of pending) {
+      this.scheduleOutputTextBoundary(message);
+    }
+  }
+
+  private resetOutputTimeline(): void {
+    this.outputTimelineAnchorTime = null;
+    this.pendingOutputTextBoundaries = [];
+    this.cancelScheduledDelimiters();
   }
 
   private cancelScheduledDelimiters(): void {
@@ -230,6 +281,7 @@ export class SanasTranslationClient {
       this.audioContext.close();
     }
     this.audioContext = null;
-    this.audioStreamStartTime = 0;
+    this.outputTimelineAnchorTime = null;
+    this.pendingOutputTextBoundaries = [];
   }
 }

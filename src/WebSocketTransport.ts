@@ -4,9 +4,10 @@ import {
   ConnectResult,
   ResetOptions,
   SanasTranslationClientOptions,
+  StreamV3ClientMessage,
+  StreamV3ServerMessage,
   Transport,
   TransportCallbacks,
-  WSMessage,
 } from "./types";
 
 const DEFAULT_INPUT_SAMPLE_RATE = 16000;
@@ -33,22 +34,11 @@ function int16ToFloat32(int16: Int16Array): Float32Array {
   return float32;
 }
 
-function base64Encode(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+function createRequestId(prefix: string): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
   }
-  return btoa(binary);
-}
-
-function base64Decode(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export class WebSocketTransport implements Transport {
@@ -64,6 +54,7 @@ export class WebSocketTransport implements Transport {
   private _isAudioEnabled = true;
   private inputSampleRate: number = DEFAULT_INPUT_SAMPLE_RATE;
   private outputSampleRate: number = DEFAULT_OUTPUT_SAMPLE_RATE;
+  private conversationId: string | null = null;
 
   private nextPlaybackTime = 0;
 
@@ -80,6 +71,8 @@ export class WebSocketTransport implements Transport {
     this.inputSampleRate = options.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE;
     this.outputSampleRate =
       options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE;
+    this.conversationId =
+      options.conversationId ?? createRequestId("conversation");
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
@@ -110,8 +103,7 @@ export class WebSocketTransport implements Transport {
 
       const float32: Float32Array = event.data;
       const int16 = float32ToInt16(float32);
-      const base64 = base64Encode(int16.buffer as ArrayBuffer);
-      this.ws.send(JSON.stringify({ type: "audio", data: base64 }));
+      this.ws.send(int16.buffer as ArrayBuffer);
     };
 
     // Connect mic → worklet
@@ -124,10 +116,12 @@ export class WebSocketTransport implements Transport {
     // Open WebSocket
     const wsUrl = this.buildWsUrl(clientOptions);
     const ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     return new Promise<ConnectResult>((resolve, reject) => {
       ws.onopen = () => {
+        this.sendInit(options);
         callbacks.onConnectionStateChange("connected");
         resolve({ audio: this.destinationNode!.stream });
       };
@@ -151,31 +145,46 @@ export class WebSocketTransport implements Transport {
       };
 
       ws.onmessage = (event: MessageEvent) => {
-        try {
-          const message = WSMessage.parse(JSON.parse(event.data));
-          this.handleServerMessage(message);
-        } catch (e) {
-          console.error("Failed to parse WebSocket message:", e);
+        if (typeof event.data === "string") {
+          try {
+            const message = StreamV3ServerMessage.parse(JSON.parse(event.data));
+            this.handleServerMessage(message);
+          } catch (e) {
+            console.error("Failed to parse WebSocket message:", e);
+          }
+          return;
         }
+        void this.handleAudioFrame(event.data);
       };
     });
   }
 
-  configure(options: ResetOptions): null {
+  configure(options: ResetOptions): string | null {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return null;
 
-    const config = {
-      type: "config",
-      lang_in: options.langIn,
-      lang_out: options.langOut,
-      input_sample_rate: this.inputSampleRate,
-      output_sample_rate: this.outputSampleRate,
-      glossary: options.glossary ?? null,
-      can_lang_swap: options.canLangSwap ?? false,
+    const requestId = options.requestId ?? createRequestId("configure");
+    const config: StreamV3ClientMessage = {
+      type: "configure",
+      language_routes: options.languageRoutes.map((route) => ({
+        lang_in: route.langIn,
+        lang_out: route.langOut,
+      })),
+      features: options.features,
+      voice_id: options.voiceId,
+      glossary: options.glossary?.map((terms) => ({ terms })),
+      request_id: requestId,
     };
 
     this.ws.send(JSON.stringify(config));
-    return null;
+    return requestId;
+  }
+
+  flush(): string | null {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return null;
+
+    const requestId = createRequestId("flush");
+    this.ws.send(JSON.stringify({ type: "flush", request_id: requestId }));
+    return requestId;
   }
 
   disconnect(): void {
@@ -209,6 +218,7 @@ export class WebSocketTransport implements Transport {
 
     this._sessionId = null;
     this.callbacks = null;
+    this.conversationId = null;
     this.nextPlaybackTime = 0;
   }
 
@@ -237,7 +247,7 @@ export class WebSocketTransport implements Transport {
       .replace(/^https:\/\//, "wss://")
       .replace(/^http:\/\//, "ws://");
 
-    const url = new URL(`${wsBase}/v2/consecutive`);
+    const url = new URL(`${wsBase}/v3/stream`);
 
     if (clientOptions.accessToken) {
       url.searchParams.set("token", clientOptions.accessToken);
@@ -248,82 +258,65 @@ export class WebSocketTransport implements Transport {
     return url.toString();
   }
 
-  private handleServerMessage(message: WSMessage): void {
+  private sendInit(options: ConnectOptions): void {
+    if (
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN ||
+      !this.conversationId
+    ) {
+      return;
+    }
+
+    const init: StreamV3ClientMessage = {
+      type: "init",
+      conversation_id: this.conversationId,
+      session_name: options.sessionName ?? "",
+      input_sample_rate: this.inputSampleRate,
+      output_sample_rate: this.outputSampleRate,
+      realtime_playback: options.realtimePlayback ?? false,
+    };
+    this.ws.send(JSON.stringify(init));
+  }
+
+  private handleServerMessage(message: StreamV3ServerMessage): void {
     switch (message.type) {
-      case "ready":
-        this._sessionId = message.session_id ?? null;
+      case "configured":
         this.nextPlaybackTime = this.audioContext?.currentTime ?? 0;
         this.callbacks?.onMessage({
-          type: "ready",
-          ready: { id: null },
-        });
-        break;
-
-      case "transcription":
-        this.callbacks?.onMessage({
-          type: "transcription",
-          transcription: {
-            complete: message.complete,
-            partial: message.partial,
-            utterance_idx: 0,
-          },
-        });
-        break;
-
-      case "translation":
-        this.callbacks?.onMessage({
-          type: "translation",
-          translation: {
-            complete: message.complete,
-            partial: message.partial,
-            utterance_idx: 0,
-          },
-        });
-        break;
-
-      case "speech_delimiter":
-        this.callbacks?.onMessage({
-          type: "speech_delimiter",
-          speech_delimiter: {
-            time: message.time,
-            transcription: message.transcription,
-            translation: message.translation,
-          },
-        });
-        break;
-
-      case "languages":
-        this.callbacks?.onMessage({
-          type: "speech_languages",
-          speech_languages: {
-            lang_in: message.lang_in,
-            lang_out: message.lang_out,
-          },
-        });
-        break;
-
-      case "audio":
-        this.playAudioChunk(message.data);
-        break;
-
-      case "speech_stop":
-        this.callbacks?.onMessage({
-          type: "speech_stop",
-          speech_stop: {},
+          type: "configured",
+          request_id: message.request_id,
         });
         break;
 
       case "error":
         this.callbacks?.onError(message.message);
+        this.callbacks?.onMessage(message);
+        break;
+
+      default:
+        this.callbacks?.onMessage(message);
         break;
     }
   }
 
-  private playAudioChunk(base64Data: string): void {
+  private async handleAudioFrame(data: unknown): Promise<void> {
+    if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") {
+      this.playAudioChunk(data as ArrayBuffer);
+      return;
+    }
+    if (ArrayBuffer.isView(data)) {
+      this.playAudioChunk(data.buffer as ArrayBuffer);
+      return;
+    }
+    if (data instanceof Blob) {
+      this.playAudioChunk(await data.arrayBuffer());
+    }
+  }
+
+  private playAudioChunk(arrayBuffer: ArrayBuffer): void {
     if (!this.audioContext || !this.destinationNode) return;
 
     const ctx = this.audioContext;
-    const arrayBuffer = base64Decode(base64Data);
     const int16 = new Int16Array(arrayBuffer);
     this.callbacks?.onAudioData?.(int16, this.outputSampleRate);
     const float32 = int16ToFloat32(int16);

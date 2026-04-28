@@ -1,7 +1,6 @@
 import {
   ConnectionState,
   IdentifiedLanguageDisplay,
-  LTMessage,
   StreamMessage,
   TranslationClientState,
   TranslationStateCallbacks,
@@ -142,7 +141,11 @@ export class TranslationState {
   };
   private _identifiedLanguages: IdentifiedLanguageDisplay[] = [];
   private callbacks: TranslationStateCallbacks;
-  private _readyPromises: Map<
+  private _configuredPromises: Map<
+    string | null,
+    { resolve: () => void; reject: (error: Error) => void }[]
+  > = new Map();
+  private _flushedPromises: Map<
     string | null,
     { resolve: () => void; reject: (error: Error) => void }[]
   > = new Map();
@@ -161,35 +164,126 @@ export class TranslationState {
 
   handleMessage(message: StreamMessage): void {
     switch (message.type) {
-      case "lt":
-        this.handleLTMessage(message.lt);
-        break;
       case "transport":
         if (this._connectionState !== message.state) {
           this._connectionState = message.state;
           this.callbacks.onConnectionStateChange?.(message.state);
         }
         break;
-      case "error":
+      case "transcription": {
+        const { complete, partial, utterance_idx: utteranceIdx } = message;
+
+        this.transcriptions = updateUtterances(
+          this.transcriptions,
+          complete,
+          partial,
+          utteranceIdx,
+        );
+
+        this.notifyUtteranceByIdx(utteranceIdx);
+        break;
+      }
+      case "translation": {
+        const { complete, partial, utterance_idx: utteranceIdx } = message;
+
+        if (complete.length > 0) {
+          this.translations = updateUtterances(
+            this.translations,
+            complete,
+            partial,
+            utteranceIdx,
+          );
+
+          this.notifyUtteranceByIdx(utteranceIdx);
+        }
+        break;
+      }
+      case "configured": {
+        const requestId = message.request_id ?? null;
+        this.resolveConfigured(requestId);
+        this.callbacks.onConfigured?.(requestId);
+        break;
+      }
+      case "output_text_boundary": {
+        this.handleOutputTextBoundary(message);
+        break;
+      }
+      case "identified_languages": {
+        this._identifiedLanguages = message.languages.map((l) => ({
+          shortCode: l.short_code,
+          name: l.name,
+          probability: l.probability,
+        }));
+        this.callbacks.onLanguages?.(this._identifiedLanguages);
+        break;
+      }
+      case "language_route": {
+        this.callbacks.onLanguageRoute?.(
+          message.lang_in,
+          message.lang_out,
+          message.utterance_idx,
+        );
+        break;
+      }
+      case "output_speech_ended": {
+        this.callbacks.onOutputSpeechEnded?.(
+          message.utterance_idx,
+          message.output_time,
+        );
+        break;
+      }
+      case "translation_ended": {
+        this.callbacks.onTranslationEnded?.(message.utterance_idx);
+        break;
+      }
+      case "flushed": {
+        const requestId = message.request_id ?? null;
+        this.resolveFlushed(requestId);
+        this.callbacks.onFlushed?.(requestId);
+        break;
+      }
+      case "error": {
         this.callbacks.onError?.(message.message);
+        break;
+      }
+      case "input_speech_started":
+      case "transcription_ended":
+      case "input_speech_ended":
+      case "output_speech_started":
         break;
     }
   }
 
-  waitForReady(resetId: string | null): Promise<void> {
+  waitForConfigured(requestId: string | null): Promise<void> {
     return new Promise((resolve, reject) => {
-      const readyPromises = this._readyPromises.get(resetId) ?? [];
-      readyPromises.push({ resolve, reject });
-      this._readyPromises.set(resetId, readyPromises);
+      const configuredPromises = this._configuredPromises.get(requestId) ?? [];
+      configuredPromises.push({ resolve, reject });
+      this._configuredPromises.set(requestId, configuredPromises);
+    });
+  }
+
+  waitForFlushed(requestId: string | null): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const flushedPromises = this._flushedPromises.get(requestId) ?? [];
+      flushedPromises.push({ resolve, reject });
+      this._flushedPromises.set(requestId, flushedPromises);
     });
   }
 
   destroy(): void {
-    this._readyPromises.forEach((readyPromises) => {
-      for (const { reject } of readyPromises) {
+    this._configuredPromises.forEach((configuredPromises) => {
+      for (const { reject } of configuredPromises) {
         reject(new Error("Disconnected"));
       }
     });
+    this._configuredPromises.clear();
+
+    this._flushedPromises.forEach((flushedPromises) => {
+      for (const { reject } of flushedPromises) {
+        reject(new Error("Disconnected"));
+      }
+    });
+    this._flushedPromises.clear();
   }
 
   getUtteranceDisplay(index: number): UtteranceDisplay {
@@ -224,128 +318,61 @@ export class TranslationState {
     };
   }
 
-  private handleLTMessage(message: LTMessage): void {
-    switch (message.type) {
-      case "transcription": {
-        const {
-          complete,
-          partial,
-          utterance_idx: utteranceIdx,
-        } = message.transcription;
+  private handleOutputTextBoundary(message: {
+    utterance_idx: number;
+    transcription?: { word_idx: number; char_idx: number } | null;
+    translation?: { word_idx: number; char_idx: number } | null;
+  }): void {
+    const oldTransBoundary = this.transcriptionsSpeechBoundary;
+    const oldTranslBoundary = this.translationsSpeechBoundary;
 
-        this.transcriptions = updateUtterances(
-          this.transcriptions,
-          complete,
-          partial,
-          utteranceIdx,
-        );
-
-        this.notifyUtteranceByIdx(utteranceIdx);
-        break;
-      }
-      case "translation": {
-        const {
-          complete,
-          partial,
-          utterance_idx: utteranceIdx,
-        } = message.translation;
-
-        if (complete.length > 0) {
-          this.translations = updateUtterances(
-            this.translations,
-            complete,
-            partial,
-            utteranceIdx,
-          );
-
-          this.notifyUtteranceByIdx(utteranceIdx);
+    const newTransBoundary: CharacterPosition = message.transcription
+      ? {
+          utteranceIdx: message.utterance_idx,
+          wordIdx: message.transcription.word_idx,
+          charIdx: message.transcription.char_idx,
         }
-        break;
-      }
-      case "ready": {
-        this.resolveReady(message.ready.id);
-        this.callbacks.onReady?.(message.ready.id);
-        break;
-      }
-      case "speech_delimiter": {
-        const { transcription, translation, time } = message.speech_delimiter;
-        console.log(
-          "[LT] Speech delimiter received:",
-          transcription,
-          translation,
-          time,
-        );
+      : this.transcriptionsSpeechBoundary;
 
-        const oldTransBoundary = this.transcriptionsSpeechBoundary;
-        const oldTranslBoundary = this.translationsSpeechBoundary;
-
-        const newTransBoundary: CharacterPosition = {
-          utteranceIdx: transcription.utterance_idx,
-          wordIdx: transcription.word_idx,
-          charIdx: transcription.char_idx,
-        };
-        const newTranslBoundary: CharacterPosition = {
-          utteranceIdx: translation.utterance_idx,
-          wordIdx: translation.word_idx,
-          charIdx: translation.char_idx,
-        };
-
-        if (
-          !positionLessThan(newTransBoundary, this.transcriptionsSpeechBoundary)
-        ) {
-          this.transcriptionsSpeechBoundary = newTransBoundary;
+    const newTranslBoundary: CharacterPosition = message.translation
+      ? {
+          utteranceIdx: message.utterance_idx,
+          wordIdx: message.translation.word_idx,
+          charIdx: message.translation.char_idx,
         }
-        if (
-          !positionLessThan(newTranslBoundary, this.translationsSpeechBoundary)
-        ) {
-          this.translationsSpeechBoundary = newTranslBoundary;
-        }
+      : this.translationsSpeechBoundary;
 
-        this.notifyAffectedUtterances(
-          oldTransBoundary,
-          this.transcriptionsSpeechBoundary,
-          oldTranslBoundary,
-          this.translationsSpeechBoundary,
-        );
-        break;
-      }
-      case "languages": {
-        this._identifiedLanguages = message.languages.languages.map((l) => ({
-          shortCode: l.short_code,
-          name: l.name,
-          probability: l.probability,
-        }));
-        this.callbacks.onLanguages?.(this._identifiedLanguages);
-        break;
-      }
-      case "speech_languages": {
-        this.callbacks.onSpeechLanguages?.(
-          message.speech_languages.lang_in,
-          message.speech_languages.lang_out,
-        );
-        break;
-      }
-      case "speech_stop": {
-        this.callbacks.onSpeechStop?.();
-        break;
-      }
-      case "error": {
-        this.callbacks.onError?.(message.error.message);
-        break;
-      }
-      default: {
-        console.warn("[LT] Unknown message type:", message.type);
-        break;
-      }
+    if (
+      !positionLessThan(newTransBoundary, this.transcriptionsSpeechBoundary)
+    ) {
+      this.transcriptionsSpeechBoundary = newTransBoundary;
     }
+    if (!positionLessThan(newTranslBoundary, this.translationsSpeechBoundary)) {
+      this.translationsSpeechBoundary = newTranslBoundary;
+    }
+
+    this.notifyAffectedUtterances(
+      oldTransBoundary,
+      this.transcriptionsSpeechBoundary,
+      oldTranslBoundary,
+      this.translationsSpeechBoundary,
+    );
   }
 
-  private resolveReady(resetId: string | null) {
-    const readyPromises = this._readyPromises.get(resetId) ?? [];
-    for (const { resolve } of readyPromises) {
+  private resolveConfigured(requestId: string | null) {
+    const configuredPromises = this._configuredPromises.get(requestId) ?? [];
+    for (const { resolve } of configuredPromises) {
       resolve();
     }
-    this._readyPromises.delete(resetId);
+    this._configuredPromises.delete(requestId);
+  }
+
+  private resolveFlushed(requestId: string | null) {
+    const flushedPromises = this._flushedPromises.get(requestId) ?? [];
+    for (const { resolve } of flushedPromises) {
+      resolve();
+    }
+    this._flushedPromises.delete(requestId);
   }
 
   private findTranslationForUtterance(

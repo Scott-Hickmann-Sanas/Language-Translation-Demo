@@ -1,21 +1,26 @@
-import { LTMessage } from "./ltMessages";
 import { ConnectionState, StreamMessage } from "./streamMessages";
+import { StreamV3ServerMessage } from "./streamV3Messages";
 import { Word } from "./words";
 
 export * from "./delimiters";
-export * from "./ltMessages";
 export * from "./streamMessages";
+export * from "./streamV3Messages";
 export * from "./words";
-export * from "./wsMessages";
 
 // --- TranslationState callbacks (state-related, all optional) ---
 
 export interface TranslationStateCallbacks {
   onUtterance?: (utterance: UtteranceDisplay, index: number) => void;
   onLanguages?: (languages: IdentifiedLanguageDisplay[]) => void;
-  onReady?: (id: string | null) => void;
-  onSpeechLanguages?: (langIn: string, langOut: string) => void;
-  onSpeechStop?: () => void;
+  onConfigured?: (requestId: string | null) => void;
+  onLanguageRoute?: (
+    langIn: string,
+    langOut: string,
+    utteranceIdx: number,
+  ) => void;
+  onOutputSpeechEnded?: (utteranceIdx: number, outputTime: number) => void;
+  onTranslationEnded?: (utteranceIdx: number) => void;
+  onFlushed?: (requestId: string | null) => void;
   onConnectionStateChange?: (state: ConnectionState) => void;
   onError?: (error: string) => void;
 }
@@ -44,12 +49,14 @@ export interface ConnectOptions {
   audioTrack: MediaStreamTrack;
   /** Conversation ID to join. */
   conversationId?: string | null;
-  /** Display name for this participant. */
-  userName?: string | null;
+  /** Session name for this participant/session. */
+  sessionName?: string | null;
   /** Input audio sample rate in Hz. Defaults to 16000. */
   inputSampleRate?: SampleRate;
   /** Output audio sample rate in Hz. Defaults to 16000. */
   outputSampleRate?: SampleRate;
+  /** Request realtime output playback from the v3 service. */
+  realtimePlayback?: boolean;
 }
 
 export interface ConnectResult {
@@ -58,26 +65,27 @@ export interface ConnectResult {
 }
 
 export interface ResetOptions {
-  /** Input language code (e.g. "en-US"). */
-  langIn: string;
-  /** Output language code (e.g. "es-ES"). */
-  langOut: string;
+  /** One or more v3 language routes to configure. */
+  languageRoutes: LanguageRoute[];
   /** Voice ID for the translated audio. */
   voiceId?: string | null;
-  /** Glossary terms to preserve during translation. */
-  glossary?: string[] | null;
-  /** Whether to clear conversation history. */
-  clearHistory?: boolean;
-  /** Whether to allow automatic language swapping. */
-  canLangSwap?: boolean;
-  /** Whether to enable language detection. */
-  detectLanguages?: boolean;
+  /** Optional glossary entries. Each object maps source terms to target terms. */
+  glossary?: Array<Record<string, string>> | null;
+  /** Optional feature flags for the v3 stream service. */
+  features?: string[];
+  /** Optional caller-provided correlation ID. */
+  requestId?: string | null;
+}
+
+export interface LanguageRoute {
+  langIn: string;
+  langOut: string;
 }
 
 // --- Transport abstraction ---
 
 export interface TransportCallbacks {
-  onMessage: (message: LTMessage) => void;
+  onMessage: (message: StreamV3ServerMessage) => void;
   onError: (error: string) => void;
   onConnectionStateChange: (state: ConnectionState) => void;
   onAudioData?: (samples: Int16Array, sampleRate: number) => void;
@@ -89,8 +97,10 @@ export interface Transport {
     clientOptions: SanasTranslationClientOptions,
     callbacks: TransportCallbacks,
   ): Promise<ConnectResult>;
-  /** Send language/config settings. Returns a reset ID (WebRTC) or null (WebSocket). */
+  /** Send language/config settings. Returns the v3 configure request ID. */
   configure(options: ResetOptions): string | null;
+  /** Flush server-side audio/text. Returns the v3 flush request ID. */
+  flush(): string | null;
   disconnect(): void;
   /** Wait for any pending audio playback to finish before tearing down. */
   drainAudio(): Promise<void>;

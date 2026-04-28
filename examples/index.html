@@ -294,8 +294,8 @@
           <input type="text" id="conversationId" placeholder="e.g. test-123" />
         </div>
         <div>
-          <label for="userName">User Name (optional)</label>
-          <input type="text" id="userName" placeholder="e.g. Test User" />
+          <label for="sessionName">Session Name (optional)</label>
+          <input type="text" id="sessionName" placeholder="e.g. Test User" />
         </div>
       </div>
       <div class="row">
@@ -389,12 +389,8 @@
         ></label>
       </div>
       <div class="checkbox-row">
-        <input type="checkbox" id="canLangSwap" />
-        <label for="canLangSwap">Can lang swap</label>
-      </div>
-      <div class="checkbox-row">
         <input type="checkbox" id="detectLangs" />
-        <label for="detectLangs">Enable language detection</label>
+        <label for="detectLangs">Enable language identification feature</label>
       </div>
     </div>
 
@@ -425,15 +421,15 @@
         >
         <span
           ><span class="info-label">Session:</span>
-          <span id="sessionId">—</span></span
+          <span id="sessionId">-</span></span
         >
         <span
           ><span class="info-label">Languages:</span>
-          <span id="detectedLangs">—</span></span
+          <span id="detectedLangs">-</span></span
         >
         <span
           ><span class="info-label">Speech Languages:</span>
-          <span id="speechLangs">—</span></span
+          <span id="speechLangs">-</span></span
         >
       </div>
     </div>
@@ -471,7 +467,7 @@
       const langInInput = document.getElementById("langIn");
       const langOutInput = document.getElementById("langOut");
       const conversationIdInput = document.getElementById("conversationId");
-      const userNameInput = document.getElementById("userName");
+      const sessionNameInput = document.getElementById("sessionName");
       const fetchLangsBtn = document.getElementById("fetchLangsBtn");
       const languagesListDiv = document.getElementById("languagesList");
       const connectBtn = document.getElementById("connectBtn");
@@ -488,7 +484,6 @@
       const audioFileSection = document.getElementById("audioFileSection");
       const audioFileInput = document.getElementById("audioFileInput");
       const audioFileNameDiv = document.getElementById("audioFileName");
-      const canLangSwapCheckbox = document.getElementById("canLangSwap");
       const detectLangsCheckbox = document.getElementById("detectLangs");
       const statusBadge = document.getElementById("statusBadge");
       const sessionIdSpan = document.getElementById("sessionId");
@@ -689,15 +684,18 @@
           onError: (error) => {
             log(`Error: ${error}`, "error");
           },
-          onSpeechLanguages: (langIn, langOut) => {
-            speechLangsSpan.textContent = `${langIn} → ${langOut}`;
-            log(`Speech languages: ${langIn} → ${langOut}`, "info");
+          onLanguageRoute: (langIn, langOut, utteranceIdx) => {
+            speechLangsSpan.textContent = `${langIn} -> ${langOut}`;
+            log(
+              `Language route for utterance ${utteranceIdx}: ${langIn} -> ${langOut}`,
+              "info",
+            );
           },
-          onSpeechStop: () => {
-            log("Speech stop detected.", "info");
+          onOutputSpeechEnded: (utteranceIdx) => {
+            log(`Output speech ended for utterance ${utteranceIdx}.`, "info");
           },
-          onReady: (id) => {
-            log(`Ready (id: ${id})`, "info");
+          onConfigured: (requestId) => {
+            log(`Configured (request_id: ${requestId})`, "info");
           },
         });
 
@@ -715,9 +713,7 @@
           endpoint: ENDPOINT,
           onMessage: (msg) => {
             // Relay to remote participant: relay.send(JSON.stringify(msg));
-            log(
-              `[stream] ${msg.type}${msg.type === "lt" ? ":" + msg.lt.type : ""}`,
-            );
+            log(`[stream] ${msg.type}`);
           },
           onAudioData: (samples, sampleRate) => {
             if (isRecording) {
@@ -760,9 +756,9 @@
 
           const connectOptions = { transport, audioTrack };
           const convId = conversationIdInput.value.trim();
-          const uName = userNameInput.value.trim();
+          const sessionName = sessionNameInput.value.trim();
           if (convId) connectOptions.conversationId = convId;
-          if (uName) connectOptions.userName = uName;
+          if (sessionName) connectOptions.sessionName = sessionName;
           const outputSR = parseInt(outputSampleRateInput.value, 10);
           if (inputSR > 0) connectOptions.inputSampleRate = inputSR;
           if (outputSR > 0) connectOptions.outputSampleRate = outputSR;
@@ -785,28 +781,25 @@
             "success",
           );
 
-          sessionIdSpan.textContent = transport.sessionId ?? "—";
+          sessionIdSpan.textContent = transport.sessionId ?? "-";
 
           // Incoming relay messages from remote participant would go here:
           // relay.onMessage((data) => theirState.handleMessage(JSON.parse(data)));
 
-          // Auto-reset with configured languages
+          // Auto-configure with v3 language routes.
           const langIn = langInInput.value.trim();
           const langOut = langOutInput.value.trim();
           if (langIn && langOut) {
-            const canLangSwap = canLangSwapCheckbox.checked;
             const detectLanguages = detectLangsCheckbox.checked;
             log(
-              `Sending reset (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+              `Sending configure (${langIn} -> ${langOut}, detectLanguages: ${detectLanguages})...`,
               "info",
             );
             await client.reset({
-              langIn,
-              langOut,
-              canLangSwap,
-              detectLanguages,
+              languageRoutes: [{ langIn, langOut }],
+              features: detectLanguages ? ["language_identification"] : [],
             });
-            log("Reset complete. Translation active.", "success");
+            log("Configure complete. Translation active.", "success");
 
             if (recordingToFile) {
               startRecording();
@@ -841,14 +834,16 @@
           return;
         }
         try {
-          const canLangSwap = canLangSwapCheckbox.checked;
           const detectLanguages = detectLangsCheckbox.checked;
           log(
-            `Resetting translation (${langIn} → ${langOut}, canLangSwap: ${canLangSwap}, detectLanguages: ${detectLanguages})...`,
+            `Configuring translation (${langIn} -> ${langOut}, detectLanguages: ${detectLanguages})...`,
             "info",
           );
-          await client.reset({ langIn, langOut, canLangSwap, detectLanguages });
-          log("Reset complete.", "success");
+          await client.reset({
+            languageRoutes: [{ langIn, langOut }],
+            features: detectLanguages ? ["language_identification"] : [],
+          });
+          log("Configure complete.", "success");
         } catch (err) {
           log(`Reset failed: ${err.message}`, "error");
         }
@@ -889,7 +884,11 @@
         view.setUint32(40, dataBytes, true);
 
         new Uint8Array(buffer, 44).set(
-          new Uint8Array(int16Samples.buffer, int16Samples.byteOffset, dataBytes),
+          new Uint8Array(
+            int16Samples.buffer,
+            int16Samples.byteOffset,
+            dataBytes,
+          ),
         );
 
         return new Blob([buffer], { type: "audio/wav" });
@@ -910,10 +909,7 @@
         recordingIndicator.style.display = "none";
 
         if (pcmChunks.length > 0) {
-          const totalLength = pcmChunks.reduce(
-            (acc, c) => acc + c.length,
-            0,
-          );
+          const totalLength = pcmChunks.reduce((acc, c) => acc + c.length, 0);
           const allSamples = new Int16Array(totalLength);
           let offset = 0;
           for (const chunk of pcmChunks) {
@@ -975,9 +971,9 @@
         isMuted = false;
         updateStatus("disconnected");
         updateButtons("disconnected");
-        sessionIdSpan.textContent = "—";
-        detectedLangsSpan.textContent = "—";
-        speechLangsSpan.textContent = "—";
+        sessionIdSpan.textContent = "-";
+        detectedLangsSpan.textContent = "-";
+        speechLangsSpan.textContent = "-";
         muteBtn.textContent = "Mute";
         audioPlayer.muted = false;
         audioPlayer.srcObject = null;
