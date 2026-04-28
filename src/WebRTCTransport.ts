@@ -30,7 +30,6 @@ function webrtcToConnectionState(
 
 const DEFAULT_INPUT_SAMPLE_RATE = 16000;
 const DEFAULT_OUTPUT_SAMPLE_RATE = 16000;
-const ICE_GATHER_TIMEOUT_MS = 1500;
 
 function createRequestId(prefix: string): string {
   if (globalThis.crypto?.randomUUID) {
@@ -39,32 +38,23 @@ function createRequestId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function waitForIceGatheringComplete(
-  peer: RTCPeerConnection,
-  timeoutMs: number,
-): Promise<void> {
-  if (peer.iceGatheringState === "complete") {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    const previousHandler = peer.onicegatheringstatechange;
-    const timeout = setTimeout(done, timeoutMs);
-
-    function done() {
-      clearTimeout(timeout);
-      peer.onicegatheringstatechange = previousHandler;
-      resolve();
+type WebRtcSignalMessage =
+  | {
+      type: "answer";
+      sdp: string;
+      session_id?: string;
     }
-
-    peer.onicegatheringstatechange = (event) => {
-      previousHandler?.call(peer, event);
-      if (peer.iceGatheringState === "complete") {
-        done();
-      }
+  | {
+      type: "candidate";
+      candidate: RTCIceCandidateInit;
+    }
+  | {
+      type: "end-of-candidates";
+    }
+  | {
+      type: "error";
+      message: string;
     };
-  });
-}
 
 export class WebRTCTransport implements Transport {
   private peerConnection: RTCPeerConnection | null = null;
@@ -78,6 +68,8 @@ export class WebRTCTransport implements Transport {
   private captureContext: AudioContext | null = null;
   private captureProcessor: ScriptProcessorNode | null = null;
   private conversationId: string | null = null;
+  private signalingSocket: WebSocket | null = null;
+  private negotiationStarted = false;
 
   get sessionId(): string | null {
     return this._sessionId;
@@ -226,6 +218,14 @@ export class WebRTCTransport implements Transport {
 
   disconnect(): void {
     this._sessionId = null;
+    this.negotiationStarted = false;
+
+    if (this.signalingSocket) {
+      this.signalingSocket.onclose = null;
+      this.signalingSocket.onerror = null;
+      this.signalingSocket.close();
+      this.signalingSocket = null;
+    }
 
     if (this.captureProcessor) {
       this.captureProcessor.disconnect();
@@ -288,59 +288,132 @@ export class WebRTCTransport implements Transport {
     peer: RTCPeerConnection,
     clientOptions: SanasTranslationClientOptions,
   ): Promise<void> {
-    const offer = await peer.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: false,
-    });
-    await peer.setLocalDescription(offer);
-    await waitForIceGatheringComplete(peer, ICE_GATHER_TIMEOUT_MS);
+    if (this.negotiationStarted) {
+      return;
+    }
+    this.negotiationStarted = true;
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+    const ws = new WebSocket(this.buildWsUrl(clientOptions));
+    this.signalingSocket = ws;
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      const fail = (message: string, err?: unknown) => {
+        this.callbacks?.onError(message);
+        if (settled) return;
+        settled = true;
+        this.negotiationStarted = false;
+        reject(err instanceof Error ? err : new Error(message));
+      };
+
+      peer.onicecandidate = (event) => {
+        if (this.signalingSocket !== ws || ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+
+        if (event.candidate) {
+          ws.send(
+            JSON.stringify({
+              type: "candidate",
+              candidate: event.candidate.toJSON(),
+            }),
+          );
+        } else {
+          ws.send(JSON.stringify({ type: "end-of-candidates" }));
+        }
+      };
+
+      ws.onopen = () => {
+        void (async () => {
+          try {
+            const offer = await peer.createOffer({
+              offerToReceiveAudio: true,
+              offerToReceiveVideo: false,
+            });
+            await peer.setLocalDescription(offer);
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                sdp: peer.localDescription?.sdp ?? offer.sdp,
+              }),
+            );
+          } catch (e) {
+            fail("Unable to create WebRTC offer.", e);
+          }
+        })();
+      };
+
+      ws.onmessage = (event) => {
+        void (async () => {
+          let message: WebRtcSignalMessage;
+          try {
+            message = JSON.parse(String(event.data)) as WebRtcSignalMessage;
+          } catch (e) {
+            fail("Invalid signaling message from server.", e);
+            return;
+          }
+
+          try {
+            switch (message.type) {
+              case "answer":
+                this._sessionId =
+                  typeof message.session_id === "string"
+                    ? message.session_id
+                    : null;
+                await peer.setRemoteDescription({
+                  type: "answer",
+                  sdp: message.sdp,
+                });
+                if (!settled) {
+                  settled = true;
+                  resolve();
+                }
+                break;
+              case "candidate":
+                await peer.addIceCandidate(message.candidate);
+                break;
+              case "end-of-candidates":
+                await peer.addIceCandidate();
+                break;
+              case "error":
+                fail(message.message);
+                break;
+            }
+          } catch (e) {
+            fail("Failed to handle WebRTC signaling message.", e);
+          }
+        })();
+      };
+
+      ws.onerror = (event) => {
+        fail("Unable to connect to translation server.", event);
+      };
+
+      ws.onclose = () => {
+        if (!settled) {
+          fail("WebRTC signaling socket closed before negotiation completed.");
+        }
+      };
+    });
+  }
+
+  private buildWsUrl(clientOptions: SanasTranslationClientOptions): string {
+    const httpUrl = clientOptions.endpoint.replace(/\/$/, "");
+    const wsBase = httpUrl
+      .replace(/^https:\/\//, "wss://")
+      .replace(/^http:\/\//, "ws://");
+
+    const url = new URL(`${wsBase}/v3/webrtc`);
 
     if (clientOptions.accessToken) {
-      headers["Authorization"] = `Bearer ${clientOptions.accessToken}`;
+      url.searchParams.set("token", clientOptions.accessToken);
     } else if (clientOptions.apiKey) {
-      headers["X-API-Key"] = clientOptions.apiKey;
+      url.searchParams.set("api_key", clientOptions.apiKey);
     } else {
       throw new Error("Missing credentials: provide apiKey or accessToken.");
     }
 
-    const payload = {
-      type: "offer",
-      sdp: peer.localDescription?.sdp ?? offer.sdp,
-    };
-
-    const endpoint = clientOptions.endpoint.replace(/\/$/, "");
-    const response = await fetch(`${endpoint}/v3/webrtc`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-      headers,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("LT session request failed:", response.status, errorText);
-
-      let errorMsg: string;
-      if (response.status === 401) {
-        errorMsg = "Authentication failed. Please sign in again.";
-      } else if (response.status === 403) {
-        errorMsg =
-          "Access denied. You don't have permission to use translation services.";
-      } else {
-        errorMsg =
-          "Unable to connect to translation server. Please try again later.";
-      }
-
-      this.callbacks?.onError(errorMsg);
-      throw new Error(errorMsg);
-    }
-
-    const answer = await response.json();
-    this._sessionId =
-      typeof answer.session_id === "string" ? answer.session_id : null;
-    await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
+    return url.toString();
   }
 }

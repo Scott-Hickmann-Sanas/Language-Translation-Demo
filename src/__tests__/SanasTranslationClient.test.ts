@@ -122,6 +122,7 @@ class MockPeerConnection {
   dataChannel = new MockDataChannel();
   ontrack: ((event: RTCTrackEvent) => void) | null = null;
   onconnectionstatechange: ((event: Event) => void) | null = null;
+  onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null;
   onicegatheringstatechange: ((event: Event) => void) | null = null;
   onnegotiationneeded: ((event: Event) => void) | null = null;
   createDataChannel = jest.fn(() => this.dataChannel);
@@ -134,6 +135,7 @@ class MockPeerConnection {
     return Promise.resolve();
   });
   setRemoteDescription = jest.fn(() => Promise.resolve());
+  addIceCandidate = jest.fn(() => Promise.resolve());
   close = jest.fn();
 
   constructor() {
@@ -390,18 +392,10 @@ describe("WebRTCTransport", () => {
     jest.clearAllMocks();
     installBrowserMocks();
     latestPeerConnection = null;
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          type: "answer",
-          sdp: "answer-sdp",
-          session_id: "webrtc-session",
-        }),
-    });
+    latestWebSocket = null;
   });
 
-  it("posts offers to /v3/webrtc and sends v3 data-channel messages", async () => {
+  it("uses websocket signaling and sends v3 data-channel messages", async () => {
     const callbacks: TransportCallbacks = {
       onMessage: jest.fn(),
       onError: jest.fn(),
@@ -423,16 +417,75 @@ describe("WebRTCTransport", () => {
     latestPeerConnection?.onnegotiationneeded?.(new Event("negotiationneeded"));
     await tick();
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      "https://lt.test.com/v3/webrtc",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "X-API-Key": "api-key" }),
-        body: JSON.stringify({ type: "offer", sdp: "offer-sdp" }),
-      }),
-    );
-
     const peer = latestPeerConnection!;
+    const ws = latestWebSocket!;
+    expect(ws.url).toBe("wss://lt.test.com/v3/webrtc?api_key=api-key");
+
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+    await tick();
+
+    expect(JSON.parse(ws.sent[0] as string)).toEqual({
+      type: "offer",
+      sdp: "offer-sdp",
+    });
+
+    peer.onicecandidate?.({
+      candidate: {
+        toJSON: () => ({
+          candidate: "candidate:1",
+          sdpMid: "0",
+          sdpMLineIndex: 0,
+        }),
+      },
+    } as unknown as RTCPeerConnectionIceEvent);
+    peer.onicecandidate?.({
+      candidate: null,
+    } as unknown as RTCPeerConnectionIceEvent);
+
+    expect(JSON.parse(ws.sent[1] as string)).toEqual({
+      type: "candidate",
+      candidate: {
+        candidate: "candidate:1",
+        sdpMid: "0",
+        sdpMLineIndex: 0,
+      },
+    });
+    expect(JSON.parse(ws.sent[2] as string)).toEqual({
+      type: "end-of-candidates",
+    });
+
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "answer",
+        sdp: "answer-sdp",
+        session_id: "webrtc-session",
+      }),
+    } as MessageEvent);
+    await tick();
+    expect(peer.setRemoteDescription).toHaveBeenCalledWith({
+      type: "answer",
+      sdp: "answer-sdp",
+    });
+    expect(transport.sessionId).toBe("webrtc-session");
+
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "candidate",
+        candidate: {
+          candidate: "candidate:server",
+          sdpMid: "0",
+          sdpMLineIndex: 0,
+        },
+      }),
+    } as MessageEvent);
+    await tick();
+    expect(peer.addIceCandidate).toHaveBeenCalledWith({
+      candidate: "candidate:server",
+      sdpMid: "0",
+      sdpMLineIndex: 0,
+    });
+
     peer.dataChannel.readyState = "open";
     peer.dataChannel.onopen?.(new Event("open"));
     peer.ontrack?.({
