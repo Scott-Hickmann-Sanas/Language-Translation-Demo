@@ -171,7 +171,7 @@ export class WebSocketTransport implements Transport {
       })),
       features: options.features,
       voice_id: options.voiceId,
-      glossary: options.glossary?.map((terms) => ({ terms })),
+      glossary: options.glossary ?? undefined,
       request_id: requestId,
     };
 

@@ -1,5 +1,8 @@
 import { ConnectionState, StreamMessage } from "./streamMessages";
-import { StreamV3ServerMessage } from "./streamV3Messages";
+import {
+  StreamV3GlossaryEntry,
+  StreamV3ServerMessage,
+} from "./streamV3Messages";
 import { Word } from "./words";
 
 export * from "./delimiters";
@@ -69,8 +72,8 @@ export interface ResetOptions {
   languageRoutes: LanguageRoute[];
   /** Voice ID for the translated audio. */
   voiceId?: string | null;
-  /** Optional glossary entries. Each object maps source terms to target terms. */
-  glossary?: Array<Record<string, string>> | null;
+  /** Optional glossary entries in the Stream v3 configure message format. */
+  glossary?: StreamV3GlossaryEntry[] | null;
   /** Optional feature flags for the v3 stream service. */
   features?: string[];
   /** Optional caller-provided correlation ID. */

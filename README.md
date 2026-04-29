@@ -180,13 +180,13 @@ Closes the connection, destroys the translation state's pending promises, and cl
 
 Configures the translation session. Sends a Stream v3 `configure` message and resolves when the server returns a matching `configured` message.
 
-| Option           | Type                                    | Description                             |
-| ---------------- | --------------------------------------- | --------------------------------------- |
-| `languageRoutes` | `{ langIn: string; langOut: string }[]` | Source and target language routes       |
-| `voiceId`        | `string?`                               | Voice ID for translated audio           |
-| `glossary`       | `Array<Record<string, string>>?`        | v3 glossary entries                     |
-| `features`       | `string[]?`                             | Optional v3 feature flags               |
-| `requestId`      | `string?`                               | Optional caller-supplied correlation ID |
+| Option           | Type                                    | Description                                             |
+| ---------------- | --------------------------------------- | ------------------------------------------------------- |
+| `languageRoutes` | `{ langIn: string; langOut: string }[]` | Source and target language routes                       |
+| `voiceId`        | `string?`                               | Voice ID for translated audio                           |
+| `glossary`       | `{ terms: Record<string, string> }[]?`  | Stream v3 glossary entries (`"*"` or lang code -> term) |
+| `features`       | `string[]?`                             | Optional v3 feature flags                               |
+| `requestId`      | `string?`                               | Optional caller-supplied correlation ID                 |
 
 #### `client.flush(): Promise<void>`
 

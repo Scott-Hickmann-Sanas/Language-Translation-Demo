@@ -1,7 +1,5 @@
 import { SanasTranslationClient } from "../SanasTranslationClient";
 import { TranslationState } from "../TranslationState";
-import { WebRTCTransport } from "../WebRTCTransport";
-import { WebSocketTransport } from "../WebSocketTransport";
 import {
   ConnectOptions,
   ConnectResult,
@@ -12,6 +10,8 @@ import {
   Transport,
   TransportCallbacks,
 } from "../types";
+import { WebRTCTransport } from "../WebRTCTransport";
+import { WebSocketTransport } from "../WebSocketTransport";
 
 class MockMediaStreamTrack {
   kind = "audio";
@@ -292,7 +292,9 @@ describe("SanasTranslationClient", () => {
       partial: [],
     });
 
-    expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith("connecting");
+    expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith(
+      "connecting",
+    );
     expect(callbacks.onConnectionStateChange).toHaveBeenCalledWith("connected");
     expect(onMessage).toHaveBeenCalledWith({
       type: "transcription",
@@ -311,14 +313,14 @@ describe("SanasTranslationClient", () => {
     const resetPromise = client.reset({
       languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
       voiceId: "voice-1",
-      glossary: [{ Sanas: "Sanas" }],
+      glossary: [{ terms: { "*": "Sanas" } }],
       features: ["language_identification"],
     });
 
     expect(transport.configure).toHaveBeenCalledWith({
       languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
       voiceId: "voice-1",
-      glossary: [{ Sanas: "Sanas" }],
+      glossary: [{ terms: { "*": "Sanas" } }],
       features: ["language_identification"],
     });
 
@@ -509,7 +511,7 @@ describe("WebRTCTransport", () => {
       transport.configure({
         requestId: "cfg-1",
         languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
-        glossary: [{ Sanas: "Sanas" }],
+        glossary: [{ terms: { "*": "Sanas" } }],
         features: ["language_identification"],
       }),
     ).toBe("cfg-1");
@@ -517,7 +519,7 @@ describe("WebRTCTransport", () => {
       type: "configure",
       request_id: "cfg-1",
       language_routes: [{ lang_in: "en-US", lang_out: "es-ES" }],
-      glossary: [{ terms: { Sanas: "Sanas" } }],
+      glossary: [{ terms: { "*": "Sanas" } }],
       features: ["language_identification"],
     });
 
@@ -594,7 +596,9 @@ describe("WebSocketTransport", () => {
     latestWorkletNode?.port.onmessage?.({
       data: new Float32Array([1, -1]),
     } as MessageEvent);
-    expect(Object.prototype.toString.call(ws.sent[3])).toBe("[object ArrayBuffer]");
+    expect(Object.prototype.toString.call(ws.sent[3])).toBe(
+      "[object ArrayBuffer]",
+    );
 
     ws.onmessage?.({
       data: JSON.stringify({ type: "configured", request_id: "cfg-1" }),
