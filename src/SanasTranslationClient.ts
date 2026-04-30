@@ -22,6 +22,7 @@ export class SanasTranslationClient {
   private outputTimelineAnchorTime: number | null = null;
   private pendingOutputTextBoundaries: StreamV3OutputTextBoundaryMessage[] = [];
   private scheduledDelimiterNodes: AudioBufferSourceNode[] = [];
+  private pendingResetRequestIds = new Set<string>();
 
   constructor(
     translationState: TranslationState,
@@ -171,7 +172,13 @@ export class SanasTranslationClient {
 
     const requestId = this.transport.configure(options);
     if (requestId !== null) {
-      await this.translationState.waitForConfigured(requestId);
+      this.pendingResetRequestIds.add(requestId);
+      this.resetOutputTimeline();
+      try {
+        await this.translationState.waitForConfigured(requestId);
+      } finally {
+        this.pendingResetRequestIds.delete(requestId);
+      }
     }
   }
 
@@ -189,6 +196,17 @@ export class SanasTranslationClient {
   // --- Internal ---
 
   private handleIncomingMessage(message: StreamMessage): void {
+    if (message.type === "configured" && message.request_id) {
+      this.pendingResetRequestIds.delete(message.request_id);
+    }
+
+    if (
+      this.pendingResetRequestIds.size > 0 &&
+      this.isUtteranceScopedMessage(message)
+    ) {
+      return;
+    }
+
     this.options.onMessage?.(message);
 
     switch (message.type) {
@@ -207,6 +225,25 @@ export class SanasTranslationClient {
       default:
         this.translationState.handleMessage(message);
         break;
+    }
+  }
+
+  private isUtteranceScopedMessage(message: StreamMessage): boolean {
+    switch (message.type) {
+      case "input_speech_started":
+      case "language_route":
+      case "transcription":
+      case "transcription_ended":
+      case "translation":
+      case "translation_ended":
+      case "input_speech_ended":
+      case "output_speech_started":
+      case "output_text_boundary":
+      case "output_speech_ended":
+      case "identified_languages":
+        return true;
+      default:
+        return false;
     }
   }
 

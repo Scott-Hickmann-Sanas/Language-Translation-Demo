@@ -333,6 +333,57 @@ describe("SanasTranslationClient", () => {
     expect(callbacks.onConfigured).toHaveBeenCalledWith("cfg-1");
   });
 
+  it("suppresses utterance messages while reset is waiting for configured", async () => {
+    const onMessage = jest.fn();
+    const { client, callbacks, state } = createClient({ onMessage });
+    const transport = await connectClient(client);
+
+    transport.callbacks?.onMessage({
+      type: "transcription",
+      utterance_idx: 0,
+      complete: [{ word: "before", start: 0, end: 1 }],
+      partial: [],
+    });
+    expect(state.getState().utterances).toHaveLength(1);
+
+    jest.clearAllMocks();
+
+    const resetPromise = client.reset({
+      languageRoutes: [{ langIn: "en-US", langOut: "es-ES" }],
+    });
+
+    transport.callbacks?.onMessage({
+      type: "transcription",
+      utterance_idx: 0,
+      complete: [{ word: "stale", start: 1, end: 2 }],
+      partial: [],
+    });
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(callbacks.onUtterance).not.toHaveBeenCalled();
+    expect(state.getUtteranceDisplay(0).transcription.complete).toEqual([
+      { word: "before", start: 0, end: 1 },
+    ]);
+
+    transport.callbacks?.onMessage({
+      type: "configured",
+      request_id: "cfg-1",
+    });
+    await expect(resetPromise).resolves.toBeUndefined();
+
+    transport.callbacks?.onMessage({
+      type: "transcription",
+      utterance_idx: 1,
+      complete: [{ word: "after", start: 2, end: 3 }],
+      partial: [],
+    });
+
+    expect(state.getState().utterances).toHaveLength(2);
+    expect(state.getUtteranceDisplay(1).transcription.complete).toEqual([
+      { word: "after", start: 2, end: 3 },
+    ]);
+  });
+
   it("flush sends v3 flush and waits for flushed", async () => {
     const { client, callbacks } = createClient();
     const transport = await connectClient(client);
