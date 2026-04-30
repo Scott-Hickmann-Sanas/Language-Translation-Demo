@@ -1,6 +1,6 @@
 {
   "name": "@sanas-ai/language-translation",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Javascript client side library for Sanas Language Translation",
   "author": {
     "name": "Scott Hickmann",
