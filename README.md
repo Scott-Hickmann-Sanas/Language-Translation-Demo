@@ -150,7 +150,7 @@ Connects to the translation server through the given transport.
 | ------------------ | ------------------ | -------- | --------------------------------------------- |
 | `transport`        | `Transport`        | Yes      | `WebRTCTransport` or `WebSocketTransport`     |
 | `audioTrack`       | `MediaStreamTrack` | Yes      | Audio track to send (from mic, file, etc.)    |
-| `conversationId`   | `string?`          |          | Conversation ID to join                       |
+| `conversationId`   | `string?`          |          | Conversation ID to join; leave empty/omit to let the server create one |
 | `sessionName`      | `string?`          |          | Session name for this participant             |
 | `inputSampleRate`  | `SampleRate?`      |          | Input sample rate in Hz (default: 16000)      |
 | `outputSampleRate` | `SampleRate?`      |          | Output sample rate in Hz (default: 16000)     |

@@ -71,8 +71,7 @@ export class WebSocketTransport implements Transport {
     this.inputSampleRate = options.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE;
     this.outputSampleRate =
       options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE;
-    this.conversationId =
-      options.conversationId ?? createRequestId("conversation");
+    this.conversationId = options.conversationId ?? "";
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
@@ -262,7 +261,7 @@ export class WebSocketTransport implements Transport {
     if (
       !this.ws ||
       this.ws.readyState !== WebSocket.OPEN ||
-      !this.conversationId
+      this.conversationId === null
     ) {
       return;
     }

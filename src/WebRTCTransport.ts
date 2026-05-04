@@ -82,8 +82,7 @@ export class WebRTCTransport implements Transport {
   ): Promise<ConnectResult> {
     this.callbacks = callbacks;
     this.connectOptions = options;
-    this.conversationId =
-      options.conversationId ?? createRequestId("conversation");
+    this.conversationId = options.conversationId ?? "";
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
@@ -262,7 +261,7 @@ export class WebRTCTransport implements Transport {
 
   private sendInit(): void {
     const options = this.connectOptions;
-    if (!options || !this.conversationId) return;
+    if (!options || this.conversationId === null) return;
 
     this.sendMessage({
       type: "init",

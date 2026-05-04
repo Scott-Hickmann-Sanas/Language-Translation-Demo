@@ -582,6 +582,52 @@ describe("WebRTCTransport", () => {
       request_id: "cfg-1",
     });
   });
+
+  it("sends an empty conversation id without generating one", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const transport = new WebRTCTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: "",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com/" },
+      callbacks,
+    );
+
+    await tick();
+    latestPeerConnection?.onnegotiationneeded?.(new Event("negotiationneeded"));
+    await tick();
+
+    const peer = latestPeerConnection!;
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+    await tick();
+
+    peer.dataChannel.readyState = "open";
+    peer.dataChannel.onopen?.(new Event("open"));
+    peer.ontrack?.({
+      streams: [new MockMediaStream() as unknown as MediaStream],
+    } as unknown as RTCTrackEvent);
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+    expect(JSON.parse(peer.dataChannel.sent[0])).toEqual({
+      type: "init",
+      conversation_id: "",
+      session_name: "",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: true,
+    });
+  });
 });
 
 describe("WebSocketTransport", () => {
@@ -664,5 +710,40 @@ describe("WebSocketTransport", () => {
       new Int16Array([1, 2]),
       16000,
     );
+  });
+
+  it("sends an empty conversation id without generating one", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const transport = new WebSocketTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: "",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com" },
+      callbacks,
+    );
+
+    await tick();
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+    expect(JSON.parse(ws.sent[0] as string)).toEqual({
+      type: "init",
+      conversation_id: "",
+      session_name: "",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: false,
+    });
   });
 });
