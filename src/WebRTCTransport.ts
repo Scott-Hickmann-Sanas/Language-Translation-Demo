@@ -1,4 +1,5 @@
 import { float32ToInt16 } from "./audio";
+import { generateConversationId } from "./generateId";
 import {
   ConnectionState,
   ConnectOptions,
@@ -62,7 +63,6 @@ export class WebRTCTransport implements Transport {
   private localStream: MediaStream | null = null;
   private audioTrack: MediaStreamTrack | null = null;
   private messageQueue: string[] = [];
-  private _sessionId: string | null = null;
   private callbacks: TransportCallbacks | null = null;
   private connectOptions: ConnectOptions | null = null;
   private captureContext: AudioContext | null = null;
@@ -72,7 +72,11 @@ export class WebRTCTransport implements Transport {
   private negotiationStarted = false;
 
   get sessionId(): string | null {
-    return this._sessionId;
+    if (this.conversationId === null) return null;
+    const sessionName = this.connectOptions?.sessionName;
+    return sessionName
+      ? `${this.conversationId}-${sessionName}`
+      : this.conversationId;
   }
 
   async connect(
@@ -82,7 +86,7 @@ export class WebRTCTransport implements Transport {
   ): Promise<ConnectResult> {
     this.callbacks = callbacks;
     this.connectOptions = options;
-    this.conversationId = options.conversationId ?? "";
+    this.conversationId = options.conversationId ?? generateConversationId();
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
@@ -216,7 +220,6 @@ export class WebRTCTransport implements Transport {
   }
 
   disconnect(): void {
-    this._sessionId = null;
     this.negotiationStarted = false;
 
     if (this.signalingSocket) {
@@ -356,10 +359,6 @@ export class WebRTCTransport implements Transport {
           try {
             switch (message.type) {
               case "answer":
-                this._sessionId =
-                  typeof message.session_id === "string"
-                    ? message.session_id
-                    : null;
                 await peer.setRemoteDescription({
                   type: "answer",
                   sdp: message.sdp,

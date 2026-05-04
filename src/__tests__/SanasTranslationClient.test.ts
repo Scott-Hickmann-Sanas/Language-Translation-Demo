@@ -520,7 +520,7 @@ describe("WebRTCTransport", () => {
       type: "answer",
       sdp: "answer-sdp",
     });
-    expect(transport.sessionId).toBe("webrtc-session");
+    expect(transport.sessionId).toBe("conversation-1-browser");
 
     ws.onmessage?.({
       data: JSON.stringify({
@@ -627,6 +627,66 @@ describe("WebRTCTransport", () => {
       output_sample_rate: 16000,
       realtime_playback: true,
     });
+  });
+
+  it("generates a conversation id for null and derives session id from it", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const transport = new WebRTCTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: null,
+        sessionName: "browser",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com/" },
+      callbacks,
+    );
+
+    await tick();
+    latestPeerConnection?.onnegotiationneeded?.(new Event("negotiationneeded"));
+    await tick();
+
+    const peer = latestPeerConnection!;
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+    await tick();
+
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "answer",
+        sdp: "answer-sdp",
+        session_id: "webrtc-session",
+      }),
+    } as MessageEvent);
+    await tick();
+
+    peer.dataChannel.readyState = "open";
+    peer.dataChannel.onopen?.(new Event("open"));
+    peer.ontrack?.({
+      streams: [new MockMediaStream() as unknown as MediaStream],
+    } as unknown as RTCTrackEvent);
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+
+    const init = JSON.parse(peer.dataChannel.sent[0]);
+    expect(init.conversation_id).toMatch(/^\d{6}-[a-z]+-[a-z]+-\d{3}$/);
+    expect(init).toEqual({
+      type: "init",
+      conversation_id: init.conversation_id,
+      session_name: "browser",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: true,
+    });
+    expect(transport.sessionId).toBe(`${init.conversation_id}-browser`);
   });
 });
 
@@ -740,6 +800,44 @@ describe("WebSocketTransport", () => {
     expect(JSON.parse(ws.sent[0] as string)).toEqual({
       type: "init",
       conversation_id: "",
+      session_name: "",
+      input_sample_rate: 16000,
+      output_sample_rate: 16000,
+      realtime_playback: false,
+    });
+  });
+
+  it("generates a conversation id for null", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const transport = new WebSocketTransport();
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: mockAudioTrack,
+        conversationId: null,
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com" },
+      callbacks,
+    );
+
+    await tick();
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+
+    const init = JSON.parse(ws.sent[0] as string);
+    expect(init.conversation_id).toMatch(/^\d{6}-[a-z]+-[a-z]+-\d{3}$/);
+    expect(init).toEqual({
+      type: "init",
+      conversation_id: init.conversation_id,
       session_name: "",
       input_sample_rate: 16000,
       output_sample_rate: 16000,

@@ -1,4 +1,5 @@
 import { float32ToInt16 } from "./audio";
+import { generateConversationId } from "./generateId";
 import {
   ConnectOptions,
   ConnectResult,
@@ -71,7 +72,10 @@ export class WebSocketTransport implements Transport {
     this.inputSampleRate = options.inputSampleRate ?? DEFAULT_INPUT_SAMPLE_RATE;
     this.outputSampleRate =
       options.outputSampleRate ?? DEFAULT_OUTPUT_SAMPLE_RATE;
-    this.conversationId = options.conversationId ?? "";
+    this.conversationId =
+      options.conversationId === null
+        ? generateConversationId()
+        : (options.conversationId ?? "");
 
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);

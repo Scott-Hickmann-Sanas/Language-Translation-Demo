@@ -146,15 +146,15 @@ const client = new SanasTranslationClient(translationState, options);
 
 Connects to the translation server through the given transport.
 
-| Option             | Type               | Required | Description                                   |
-| ------------------ | ------------------ | -------- | --------------------------------------------- |
-| `transport`        | `Transport`        | Yes      | `WebRTCTransport` or `WebSocketTransport`     |
-| `audioTrack`       | `MediaStreamTrack` | Yes      | Audio track to send (from mic, file, etc.)    |
-| `conversationId`   | `string?`          |          | Conversation ID to join; leave empty/omit to let the server create one |
-| `sessionName`      | `string?`          |          | Session name for this participant             |
-| `inputSampleRate`  | `SampleRate?`      |          | Input sample rate in Hz (default: 16000)      |
-| `outputSampleRate` | `SampleRate?`      |          | Output sample rate in Hz (default: 16000)     |
-| `realtimePlayback` | `boolean?`         |          | Request realtime playback from the v3 service |
+| Option             | Type               | Required | Description                                                  |
+| ------------------ | ------------------ | -------- | ------------------------------------------------------------ |
+| `transport`        | `Transport`        | Yes      | `WebRTCTransport` or `WebSocketTransport`                    |
+| `audioTrack`       | `MediaStreamTrack` | Yes      | Audio track to send (from mic, file, etc.)                   |
+| `conversationId`   | `string \| null?`  |          | Conversation ID to join; pass `null` to generate one locally |
+| `sessionName`      | `string?`          |          | Session name for this participant                            |
+| `inputSampleRate`  | `SampleRate?`      |          | Input sample rate in Hz (default: 16000)                     |
+| `outputSampleRate` | `SampleRate?`      |          | Output sample rate in Hz (default: 16000)                    |
+| `realtimePlayback` | `boolean?`         |          | Request realtime playback from the v3 service                |
 
 Returns `{ audio: MediaStream }` - the translated audio stream.
 
