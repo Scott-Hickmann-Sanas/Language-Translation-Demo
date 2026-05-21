@@ -17,6 +17,7 @@ export class SanasTranslationClient {
 
   private transport: Transport | null = null;
   private _isAudioEnabled = true;
+  private hasAudioEnabledOverride = false;
 
   private audioContext: AudioContext | null = null;
   private outputTimelineAnchorTime: number | null = null;
@@ -43,13 +44,29 @@ export class SanasTranslationClient {
 
     const transport = options.transport;
     this.transport = transport;
+    const shouldApplyAudioEnabled =
+      options.audioEnabled !== undefined ||
+      this.hasAudioEnabledOverride ||
+      !options.audioTrack.enabled;
+    const audioEnabled =
+      options.audioEnabled ??
+      (this.hasAudioEnabledOverride
+        ? this._isAudioEnabled
+        : options.audioTrack.enabled);
+    const connectOptions = shouldApplyAudioEnabled
+      ? { ...options, audioEnabled }
+      : options;
+    this._isAudioEnabled = audioEnabled;
+    if (shouldApplyAudioEnabled) {
+      options.audioTrack.enabled = audioEnabled;
+    }
 
     const ctx = new AudioContext();
     this.audioContext = ctx;
     await ctx.resume();
 
     try {
-      const result = await transport.connect(options, this.options, {
+      const result = await transport.connect(connectOptions, this.options, {
         onMessage: (msg) => this.handleIncomingMessage(msg),
         onError: (error: string) =>
           this.handleIncomingMessage({
@@ -71,7 +88,9 @@ export class SanasTranslationClient {
       silentGain.connect(ctx.destination);
       osc.start();
 
-      transport.setAudioEnabled(this._isAudioEnabled);
+      if (shouldApplyAudioEnabled) {
+        transport.setAudioEnabled(this._isAudioEnabled);
+      }
 
       return result;
     } catch (err) {
@@ -191,6 +210,12 @@ export class SanasTranslationClient {
     if (requestId !== null) {
       await this.translationState.waitForFlushed(requestId);
     }
+  }
+
+  setAudioEnabled(enabled: boolean): void {
+    this._isAudioEnabled = enabled;
+    this.hasAudioEnabledOverride = true;
+    this.transport?.setAudioEnabled(enabled);
   }
 
   // --- Internal ---

@@ -307,6 +307,60 @@ describe("SanasTranslationClient", () => {
     ]);
   });
 
+  it("preserves a muted input track during connect", async () => {
+    const track = new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+    track.enabled = false;
+    const { client } = createClient();
+    const transport = new MockTransport();
+
+    await client.connect({ transport, audioTrack: track });
+
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audioTrack: track,
+        audioEnabled: false,
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(transport.setAudioEnabled).toHaveBeenLastCalledWith(false);
+    expect(track.enabled).toBe(false);
+  });
+
+  it("does not force-enable transport audio by default after connect", async () => {
+    const { client } = createClient();
+    const transport = new MockTransport();
+
+    await client.connect({ transport, audioTrack: mockAudioTrack });
+
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.not.objectContaining({ audioEnabled: expect.any(Boolean) }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(transport.setAudioEnabled).not.toHaveBeenCalled();
+  });
+
+  it("applies pre-connect audio enabled changes to the transport", async () => {
+    const track = new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+    const { client } = createClient();
+    const transport = new MockTransport();
+
+    client.setAudioEnabled(false);
+    await client.connect({ transport, audioTrack: track });
+
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audioTrack: track,
+        audioEnabled: false,
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(transport.setAudioEnabled).toHaveBeenLastCalledWith(false);
+    expect(track.enabled).toBe(false);
+  });
+
   it("reset sends v3 configure options and waits for configured", async () => {
     const { client, callbacks } = createClient();
     const transport = await connectClient(client);
@@ -583,6 +637,61 @@ describe("WebRTCTransport", () => {
     });
   });
 
+  it("keeps the input track muted when disabled before WebRTC connect", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const track = new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+    const transport = new WebRTCTransport();
+    transport.setAudioEnabled(false);
+
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: track,
+        conversationId: "conversation-1",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com/" },
+      callbacks,
+    );
+
+    expect(track.enabled).toBe(false);
+    expect(latestPeerConnection?.addTrack).toHaveBeenCalledWith(
+      track,
+      expect.any(MockMediaStream),
+    );
+
+    await tick();
+    latestPeerConnection?.onnegotiationneeded?.(new Event("negotiationneeded"));
+    await tick();
+
+    const peer = latestPeerConnection!;
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+    await tick();
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "answer",
+        sdp: "answer-sdp",
+      }),
+    } as MessageEvent);
+    await tick();
+
+    peer.dataChannel.readyState = "open";
+    peer.dataChannel.onopen?.(new Event("open"));
+    peer.ontrack?.({
+      streams: [new MockMediaStream() as unknown as MediaStream],
+    } as unknown as RTCTrackEvent);
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+    expect(track.enabled).toBe(false);
+  });
+
   it("sends an empty conversation id without generating one", async () => {
     const callbacks: TransportCallbacks = {
       onMessage: jest.fn(),
@@ -770,6 +879,44 @@ describe("WebSocketTransport", () => {
       new Int16Array([1, 2]),
       16000,
     );
+  });
+
+  it("does not send binary input frames when muted before WebSocket connect", async () => {
+    const callbacks: TransportCallbacks = {
+      onMessage: jest.fn(),
+      onError: jest.fn(),
+      onConnectionStateChange: jest.fn(),
+    };
+    const track = new MockMediaStreamTrack() as unknown as MediaStreamTrack;
+    const transport = new WebSocketTransport();
+    transport.setAudioEnabled(false);
+
+    const connectPromise = transport.connect(
+      {
+        transport,
+        audioTrack: track,
+        conversationId: "conversation-1",
+      },
+      { apiKey: "api-key", endpoint: "https://lt.test.com" },
+      callbacks,
+    );
+
+    await tick();
+    const ws = latestWebSocket!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.(new Event("open"));
+
+    await expect(connectPromise).resolves.toEqual({
+      audio: expect.any(MockMediaStream),
+    });
+    expect(track.enabled).toBe(false);
+
+    latestWorkletNode?.port.onmessage?.({
+      data: new Float32Array([1, -1]),
+    } as MessageEvent);
+
+    expect(ws.sent).toHaveLength(1);
+    expect(JSON.parse(ws.sent[0] as string).type).toBe("init");
   });
 
   it("sends an empty conversation id without generating one", async () => {

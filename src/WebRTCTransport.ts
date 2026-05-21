@@ -70,6 +70,8 @@ export class WebRTCTransport implements Transport {
   private conversationId: string | null = null;
   private signalingSocket: WebSocket | null = null;
   private negotiationStarted = false;
+  private _isAudioEnabled = true;
+  private hasAudioEnabledOverride = false;
 
   get sessionId(): string | null {
     if (this.conversationId === null) return null;
@@ -88,6 +90,13 @@ export class WebRTCTransport implements Transport {
     this.connectOptions = options;
     this.conversationId = options.conversationId ?? generateConversationId();
 
+    const audioEnabled =
+      options.audioEnabled ??
+      (this.hasAudioEnabledOverride
+        ? this._isAudioEnabled
+        : options.audioTrack.enabled);
+    this._isAudioEnabled = audioEnabled;
+    options.audioTrack.enabled = audioEnabled;
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
 
@@ -257,6 +266,8 @@ export class WebRTCTransport implements Transport {
   }
 
   setAudioEnabled(enabled: boolean): void {
+    this._isAudioEnabled = enabled;
+    this.hasAudioEnabledOverride = true;
     if (this.audioTrack) {
       this.audioTrack.enabled = enabled;
     }

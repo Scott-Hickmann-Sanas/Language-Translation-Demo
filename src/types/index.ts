@@ -50,6 +50,8 @@ export interface ConnectOptions {
   transport: Transport;
   /** Audio track to send to the server (from mic, file, etc.). */
   audioTrack: MediaStreamTrack;
+  /** Whether input audio should be sent immediately. Defaults to audioTrack.enabled. */
+  audioEnabled?: boolean;
   /** Conversation ID to join. Use null to generate one locally. */
   conversationId?: string | null;
   /** Session name for this participant/session. */

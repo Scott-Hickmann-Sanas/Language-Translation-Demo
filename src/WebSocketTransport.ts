@@ -53,6 +53,7 @@ export class WebSocketTransport implements Transport {
   private _sessionId: string | null = null;
   private callbacks: TransportCallbacks | null = null;
   private _isAudioEnabled = true;
+  private hasAudioEnabledOverride = false;
   private inputSampleRate: number = DEFAULT_INPUT_SAMPLE_RATE;
   private outputSampleRate: number = DEFAULT_OUTPUT_SAMPLE_RATE;
   private conversationId: string | null = null;
@@ -77,6 +78,13 @@ export class WebSocketTransport implements Transport {
         ? generateConversationId()
         : (options.conversationId ?? "");
 
+    const audioEnabled =
+      options.audioEnabled ??
+      (this.hasAudioEnabledOverride
+        ? this._isAudioEnabled
+        : options.audioTrack.enabled);
+    this._isAudioEnabled = audioEnabled;
+    options.audioTrack.enabled = audioEnabled;
     this.audioTrack = options.audioTrack;
     this.localStream = new MediaStream([options.audioTrack]);
 
@@ -239,6 +247,7 @@ export class WebSocketTransport implements Transport {
 
   setAudioEnabled(enabled: boolean): void {
     this._isAudioEnabled = enabled;
+    this.hasAudioEnabledOverride = true;
     if (this.audioTrack) {
       this.audioTrack.enabled = enabled;
     }
