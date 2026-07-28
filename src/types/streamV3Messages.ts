@@ -30,6 +30,7 @@ export const StreamV3ConfigureMessage = z.object({
   voice_id: z.string().nullable().optional(),
   glossary: z.array(StreamV3GlossaryEntry).optional(),
   request_id: z.string().nullable().optional(),
+  domain: z.string().nullable().optional(),
 });
 export type StreamV3ConfigureMessage = z.infer<typeof StreamV3ConfigureMessage>;
 

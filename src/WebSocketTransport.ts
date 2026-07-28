@@ -184,6 +184,7 @@ export class WebSocketTransport implements Transport {
       voice_id: options.voiceId,
       glossary: options.glossary ?? undefined,
       request_id: requestId,
+      domain: options.domain ?? undefined,
     };
 
     this.ws.send(JSON.stringify(config));

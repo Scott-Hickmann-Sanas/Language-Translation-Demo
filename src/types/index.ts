@@ -80,6 +80,8 @@ export interface ResetOptions {
   features?: string[];
   /** Optional caller-provided correlation ID. */
   requestId?: string | null;
+  /** Optional description of what the call is about. */
+  domain?: string | null;
 }
 
 export interface LanguageRoute {

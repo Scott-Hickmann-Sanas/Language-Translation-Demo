@@ -217,6 +217,7 @@ export class WebRTCTransport implements Transport {
       voice_id: options.voiceId,
       glossary: options.glossary ?? undefined,
       request_id: id,
+      domain: options.domain ?? undefined,
     };
     this.sendMessage(message);
     return id;
