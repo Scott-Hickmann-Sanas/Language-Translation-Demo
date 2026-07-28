@@ -1,14 +1,14 @@
 {
   "name": "@sanas-ai/language-translation",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Javascript client side library for Sanas Language Translation",
   "author": {
-    "name": "Scott Hickmann",
-    "email": "scott.hickmann@sanas.ai"
+    "name": "Eric Lou",
+    "email": "eric.lou@sanas.ai"
   },
   "license": "Apache-2.0",
   "type": "module",
-  "repository": "https://github.com/Scott-Hickmann-Sanas/Language-Translation-Demo",
+  "repository": "https://github.com/Sanas-LT/Language-Translation-Demo",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "exports": {
